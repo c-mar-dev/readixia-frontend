@@ -185,29 +185,96 @@ export const mockDecisions = [
     }
   },
 
-  // --- 9. Extraction Confirmation Card ---
-  {
-    id: 'd_extract1',
-    decisionType: 'extract',
-    status: 'pending',
-    subject: { type: 'task', id: 't_extract1', title: 'Create Q1 roadmap draft', source: 'transcript' },
-    project: 'Q1 Planning',
-    priority: 'high',
-    question: 'Confirm extracted task',
-    created: '10m ago',
-    data: {
-      sourceTitle: 'Q4 Planning Meeting',
-      progress: '1 of 4',
-      owner: 'me',
-      due: 'Dec 15',
-      quote: '...agreed to have draft ready for exec review by the 15th...', 
-      confidence: 'high', // high, medium, low
-      suggestedProject: 'Q1 Planning',
-      suggestedPriority: 'p2'
+    // --- 9. Extraction Confirmation Card ---
+    {
+      id: 'd_extract1',
+      decisionType: 'extract',
+      status: 'pending',
+      subject: { type: 'task', id: 't_extract1', title: 'Create Q1 roadmap draft', source: 'transcript' },
+      project: 'Q1 Planning',
+      priority: 'high',
+      question: 'Confirm extracted task',
+      created: '10m ago',
+      data: {
+        sourceTitle: 'Q4 Planning Meeting',
+        progress: '1 of 4',
+        owner: 'me',
+        due: 'Dec 15',
+        quote: '...agreed to have draft ready for exec review by the 15th...',
+        confidence: 'high', // high, medium, low
+        suggestedProject: 'Q1 Planning',
+        suggestedPriority: 'p2'
+      }
+    },
+  
+    // --- ADDITIONAL EXAMPLES ---
+  
+    // 10. Triage (Email Source)
+    {
+      id: 'd_triage2',
+      decisionType: 'triage',
+      status: 'pending',
+      subject: { type: 'email', id: 't_triage2', title: 'Fwd: Invoice attached', source: 'email', originalText: 'Please pay this by Friday' },
+      project: 'Finance',
+      priority: 'high',
+      question: 'Route this item',
+      created: '15m ago',
+      data: {
+        destination: ['Quick Win', 'Reference', 'Delegate'],
+        suggestedDestination: 'Quick Win',
+        suggestedProject: 'Finance',
+        suggestedPriority: 'p1'
+      }
+    },
+  
+    // 11. Specify (Technical Task)
+    {
+      id: 'd_spec2',
+      decisionType: 'specify',
+      status: 'pending',
+      subject: { type: 'task', id: 't_spec2', title: 'Optimize database queries', source: 'manual' },
+      project: 'Backend API',
+      priority: 'normal',
+      question: 'Define spec',
+      created: '30m ago',
+      data: {
+        context: 'Project [[Backend API]], Source: Manual',
+        aiSpec: {
+          objective: 'Reduce latency of /users endpoint by 50%.',
+          constraints: 'Must not break existing tests.',
+          techStack: 'PostgreSQL, Node.js'
+        },
+        successCriteria: [
+          { id: 'sc1', text: 'p99 latency < 200ms', checked: false },
+          { id: 'sc2', text: 'All tests pass', checked: true }
+        ]
+      }
+    },
+  
+    // 12. Review (Rejected)
+    {
+      id: 'd_review2',
+      decisionType: 'review',
+      status: 'pending',
+      subject: { type: 'task', id: 't_review2', title: 'New Logo Design', source: 'manual' },
+      project: 'Marketing',
+      priority: 'normal',
+      question: 'Review work',
+      created: '2h ago',
+      data: {
+        completedBy: 'Claude (1 attempt)',
+        verified: true,
+        specSummary: {
+          objective: 'Create a modern, minimalist logo.',
+          format: 'SVG'
+        },
+        resultSummary: {
+          preview: '[SVG Image Placeholder]',
+          fullDocLink: '#'
+        }
+      }
     }
-  }
-];
-
+  ];
 // Decision type configuration with colors and styling
 export const decisionTypeConfig = {
   enrich: {
