@@ -32,9 +32,34 @@
   $: config = decisionTypeConfig[decision.decisionType];
   $: thingConfig = thingTypeConfig[decision.subject.type];
   $: data = decision.data || {};
+
+  // Workflow stages for the progress bar
+  const workflow = ['triage', 'specify', 'verifying', 'review'];
+  $: currentStep = workflow.indexOf(decision.decisionType);
+  $: showProgress = currentStep !== -1;
+  $: progressPercent = ((currentStep + 1) / (workflow.length + 1)) * 100;
 </script>
 
 <div class="max-w-4xl mx-auto p-8">
+  <!-- Discreet Workflow Progress -->
+  {#if showProgress}
+    <div class="mb-6">
+      <div class="flex justify-between items-end mb-2">
+        <div class="flex gap-4">
+          {#each workflow as step, i}
+            <div class="flex flex-col gap-1">
+              <span class="text-[10px] uppercase font-bold tracking-widest {i <= currentStep ? 'text-amber-500' : 'text-zinc-600'}">
+                {step}
+              </span>
+              <div class="h-1 w-12 rounded-full {i <= currentStep ? 'bg-amber-500' : 'bg-zinc-800'} transition-all duration-500"></div>
+            </div>
+          {/each}
+        </div>
+        <span class="text-[10px] font-mono text-zinc-500 uppercase">Stage {currentStep + 1} of 4</span>
+      </div>
+    </div>
+  {/if}
+
   <!-- Card Header -->
   <div class="mb-8 border-b border-zinc-800 pb-6">
      <div class="flex items-center gap-3 mb-4">
