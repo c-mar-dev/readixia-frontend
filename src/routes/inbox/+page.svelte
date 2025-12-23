@@ -3,6 +3,7 @@
   import { tick } from 'svelte';
   import { goto } from '$app/navigation';
   import DecisionCard from '$lib/components/DecisionCard.svelte';
+  import { getNextDecision } from '$lib/utils/chaining.js';
   import {
     mockDecisions,
     decisionTypeConfig,
@@ -27,10 +28,6 @@
   let toastId = 0;
   let toasts = [];
   let lastAction = null;
-
-  // Dropdown state (for filters if needed, though header uses simple buttons)
-  // Inbox header uses simple buttons, so no dropdown logic needed here unless we want to match main queue exactly.
-  // The current inbox header design is distinct (email style). I will keep it simple.
 
   // Reactive filtered decisions
   $: pendingDecisions = decisions.filter(d => d.status === 'pending');
@@ -75,8 +72,20 @@
     const { name, decision } = event.detail;
     showToast(`${name}: ${decision.subject.title}`, 'success');
     lastAction = { type: 'action', name, decision, previousIndex: selectedIndex, timestamp: Date.now() };
+    
     markAsCompleted(decision.id);
-    moveToNextDecision();
+
+    const nextDecision = getNextDecision(decision, name);
+    if (nextDecision) {
+       const idx = decisions.findIndex(d => d.id === decision.id);
+       if (idx !== -1) {
+          decisions.splice(idx + 1, 0, nextDecision);
+          decisions = decisions; 
+          // selectedIndex stays the same, pointing to the new item that took the slot
+       }
+    } else {
+       moveToNextDecision();
+    }
   }
 
   function handleSkip() {

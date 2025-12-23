@@ -5,6 +5,7 @@
   import ClarificationModal from '$lib/components/ClarificationModal.svelte';
   import TaskCreationModal from '$lib/components/TaskCreationModal.svelte';
   import DecisionCard from '$lib/components/DecisionCard.svelte';
+  import { getNextDecision } from '$lib/utils/chaining.js';
   
   import {
     mockDecisions,
@@ -157,12 +158,73 @@
   }
 
   // Handle actions from the DecisionCard component
-  function handleCardAction(event) {
+  async function handleCardAction(event) {
     const { name, decision, payload } = event.detail;
     showToast(`${name}: ${decision.subject.title}`, 'success');
     lastAction = { type: 'action', name, decision, previousIndex: selectedIndex, timestamp: Date.now() };
     
+    // Mark as completed
     markAsCompleted(decision.id);
+
+    let nextDecisions = [];
+
+    // Special handling: Meeting Task Extraction
+    if (name === 'Confirm Meeting Tasks' && payload?.selectedTasks) {
+       const meetingTitle = decision.subject.title;
+       const meetingProject = decision.project;
+       
+       // Filter extracting only checked tasks
+       const tasksToCreate = decision.data.extractedTasks.filter(t => payload.selectedTasks[t.id]);
+       
+       nextDecisions = tasksToCreate.map((task, i) => ({
+          id: `d_new_${Date.now()}_${i}`,
+          decisionType: 'triage',
+          status: 'pending',
+          subject: {
+             type: 'task',
+             id: `task_${Date.now()}_${i}`,
+             title: task.title,
+             source: 'transcript',
+             parentTitle: meetingTitle
+          },
+          project: meetingProject,
+          priority: task.priority === 'high' ? 'urgent' : 'normal',
+          question: 'Route extracted task',
+          created: 'just now',
+          data: {
+             destination: ['Quick Win', 'Project Task', 'Reference'],
+             suggestedDestination: 'Project Task',
+             suggestedProject: meetingProject,
+             suggestedPriority: task.priority === 'high' ? 'p1' : 'p2'
+          },
+          _isNew: true
+       }));
+       
+       if (nextDecisions.length > 0) {
+          showToast(`Extracted ${nextDecisions.length} tasks`, 'success');
+       }
+    } 
+    // Standard Chaining
+    else {
+       const chained = getNextDecision(decision, name);
+       if (chained) {
+          nextDecisions = [chained];
+       }
+    }
+
+    // Insert next decisions
+    if (nextDecisions.length > 0) {
+       const idx = decisions.findIndex(d => d.id === decision.id);
+       if (idx !== -1) {
+          // Splice them in after the completed item
+          decisions.splice(idx + 1, 0, ...nextDecisions);
+          decisions = decisions; // Trigger reactivity
+          // selectedIndex should essentially stay put, as the current item vanished 
+          // and new items appeared in its place.
+       }
+    }
+
+    // Adjust navigation if needed (e.g. if we hit end of list)
     moveToNextDecision();
   }
 

@@ -3,6 +3,7 @@
   import { goto } from '$app/navigation';
   import DecisionCard from '$lib/components/DecisionCard.svelte';
   import { mockDecisions } from '$lib/data/decisions.js';
+  import { getNextDecision } from '$lib/utils/chaining.js';
 
   // State
   let decisions = [...mockDecisions];
@@ -17,42 +18,45 @@
   $: totalCount = pendingDecisions.length;
   $: currentDecision = pendingDecisions[currentIndex] || null;
 
+  // Auto-fix index if out of bounds (e.g. after completion)
+  $: if (currentIndex >= pendingDecisions.length && pendingDecisions.length > 0) {
+     currentIndex = Math.max(0, pendingDecisions.length - 1);
+  }
+
   function showToast(message, type = 'success') {
     const id = toastId++;
     toasts = [...toasts, { id, message, type }];
     setTimeout(() => { toasts = toasts.filter(t => t.id !== id); }, 2000);
   }
 
-  function advanceToNext() {
-    if (currentIndex < pendingDecisions.length - 1) {
-      currentIndex++;
-    } else {
-      showToast('All decisions completed!', 'success');
-      setTimeout(() => goto('/'), 1500);
-    }
-  }
-
   function handleCardAction(event) {
-    const { name, decision } = event.detail;
+    const { name, decision, payload } = event.detail;
     showToast(`${name}`, 'success');
     
-    // Mark as completed in local state
+    // 1. Mark as completed
     const idx = decisions.findIndex(d => d.id === decision.id);
     if (idx !== -1) {
        decisions[idx] = { ...decisions[idx], status: 'completed' };
-       // Re-trigger reactivity
-       decisions = [...decisions];
+    }
+
+    // 2. Check for chain
+    const nextDecision = getNextDecision(decision, name);
+    if (nextDecision) {
+       decisions.splice(idx + 1, 0, nextDecision);
     }
     
-    // Check if we need to adjust index (since list of pending might shrink or shift)
-    // Actually, if we filter pendingDecisions reactively, removing one will shift the array.
-    // If we mark as completed, it disappears from pendingDecisions.
-    // So we don't strictly need to increment index, the next one will fall into slot 0 or current slot.
-    // But let's stick to a simple flow:
-    // If we filter, the array changes length. currentIndex might point to the next one automatically.
-    // If we keep the index, we might go out of bounds.
-    if (currentIndex >= pendingDecisions.length) {
-       currentIndex = Math.max(0, pendingDecisions.length - 1);
+    // Trigger reactivity
+    decisions = [...decisions];
+
+    // Note: We do NOT increment currentIndex here. 
+    // Since the current item is removed from 'pendingDecisions', 
+    // the item that was at currentIndex+1 shifts down to currentIndex.
+    // Or if we chained, the new item takes the slot.
+    // So we effectively advance by doing nothing to the index.
+    
+    if (pendingDecisions.length === 0 && !nextDecision) {
+       showToast('All decisions completed!', 'success');
+       setTimeout(() => goto('/'), 1500);
     }
   }
 
@@ -69,8 +73,6 @@
   function handleKeydown(event) {
     if (event.key === 'Escape') { goto('/'); return; }
     
-    // Most keyboard shortcuts are handled inside DecisionCard or native inputs
-    // But we can add global navigation
     if (event.target.tagName === 'BODY') {
        if (event.key === 'ArrowRight') handleSkip();
     }
@@ -95,7 +97,7 @@
         <div class="w-48 h-2 bg-zinc-800 rounded-full overflow-hidden">
           <div
             class="h-full bg-amber-500 transition-all duration-300"
-            style="width: {totalCount > 0 ? ((totalCount - pendingDecisions.length + (currentDecision ? 0 : 1)) / mockDecisions.length) * 100 : 100}%"
+            style="width: {totalCount > 0 ? ((1 - (pendingDecisions.length / mockDecisions.length)) * 100) : 100}%"
           ></div>
         </div>
         <span class="text-zinc-400 text-sm font-medium">
