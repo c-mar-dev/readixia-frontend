@@ -8,11 +8,13 @@ export const GET: RequestHandler = async ({ cookies }) => {
   const state = crypto.randomBytes(16).toString("hex");
   
   // Store state in cookie for verification
+  // Using sameSite: "none" because the callback comes from Google's domain
+  // This requires secure: true (which we have via HTTPS)
   cookies.set("oauth_state", state, {
     path: "/",
     httpOnly: true,
     secure: true,
-    sameSite: "lax",
+    sameSite: "none",
     maxAge: 60 * 10 // 10 minutes
   });
 

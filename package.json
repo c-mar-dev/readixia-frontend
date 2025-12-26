@@ -14,6 +14,7 @@
     "test:e2e:headed": "playwright test --headed",
     "test:e2e:prod": "playwright test --config=playwright.production.config.ts --project=chromium-standalone",
     "test:e2e:prod:auth": "playwright test --config=playwright.production.config.ts --project=auth-setup --headed",
+    "test:e2e:prod:auth-manual": "playwright test --config=playwright.production.config.ts --project=auth-manual --headed",
     "test:e2e:prod:authed": "playwright test --config=playwright.production.config.ts --project=chromium",
     "test:e2e:prod:ui": "playwright test --config=playwright.production.config.ts --ui",
     "test:e2e:prod:headed": "playwright test --config=playwright.production.config.ts --headed --project=chromium-standalone"

@@ -12,7 +12,7 @@ import { defineConfig, devices } from '@playwright/test';
  */
 export default defineConfig({
   testDir: './tests/e2e',
-  testMatch: ['**/workflows.spec.ts', '**/production.spec.ts'],
+  testMatch: ['**/workflows.spec.ts', '**/production.spec.ts', '**/auth*.setup.ts'],
 
   // Run tests in parallel
   fullyParallel: true,
@@ -57,19 +57,26 @@ export default defineConfig({
   // Configure projects for different browsers
   projects: [
     // Auth setup project - run this first to authenticate
+    // Uses real Chrome to bypass Google's "insecure browser" detection
     {
       name: 'auth-setup',
       testMatch: /auth\.setup\.ts/,
       use: {
-        ...devices['Desktop Chrome'],
-        // No storage state for auth setup
+        channel: 'chrome', // Use installed Chrome, not Playwright Chromium
       },
     },
-    // Main tests - depend on auth setup
+    // Manual auth - uses existing Chrome profile
+    {
+      name: 'auth-manual',
+      testMatch: /auth-manual\.setup\.ts/,
+      use: {
+        channel: 'chrome',
+      },
+    },
+    // Main tests with stored auth
     {
       name: 'chromium',
       testMatch: /workflows\.spec\.ts/,
-      dependencies: ['auth-setup'],
       use: {
         ...devices['Desktop Chrome'],
         // Use stored auth state
