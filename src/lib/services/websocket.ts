@@ -64,6 +64,21 @@ export class WebSocketClient {
       document.addEventListener('visibilitychange', this.handleVisibilityChange);
       this.isPageVisible = document.visibilityState === 'visible';
     }
+
+    // Set up beforeunload listener to cleanup on page refresh/close
+    if (typeof window !== 'undefined') {
+      this.handleBeforeUnload = this.handleBeforeUnload.bind(this);
+      window.addEventListener('beforeunload', this.handleBeforeUnload);
+    }
+  }
+
+  /**
+   * Handle page unload - close WebSocket gracefully.
+   */
+  private handleBeforeUnload(): void {
+    if (this.socket?.readyState === WebSocket.OPEN) {
+      this.socket.close(1000, 'Page unload');
+    }
   }
 
   // ===========================================================================
@@ -122,6 +137,10 @@ export class WebSocketClient {
 
     if (typeof document !== 'undefined') {
       document.removeEventListener('visibilitychange', this.handleVisibilityChange);
+    }
+
+    if (typeof window !== 'undefined') {
+      window.removeEventListener('beforeunload', this.handleBeforeUnload);
     }
   }
 
