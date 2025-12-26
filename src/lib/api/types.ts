@@ -605,20 +605,43 @@ export interface AgentConfig {
 
 // --- Costs API (UNIT-API-009) ---
 
+/** Subscription mode for cost tracking */
+export type SubscriptionMode = 'api' | 'max_5x' | 'max_20x';
+
 /** Response from GET /api/config/costs */
 export interface CostsConfigResponse {
+  // Subscription mode
+  subscription_mode: SubscriptionMode;
+
+  // API mode limits
   daily_limit_usd: number;
   hourly_limit_usd: number;
+
+  // Max mode limits
+  weekly_compute_hours_limit: number;
+  hourly_request_limit: number;
+
+  // Common
   alert_threshold_pct: number;
+
+  // API mode usage (read-only)
   current_daily_usage_usd: number;
   current_hourly_usage_usd: number;
+
+  // Max mode usage (read-only)
+  current_weekly_compute_hours: number;
+  current_hourly_requests: number;
+
   last_updated: string | null;
 }
 
 /** Request for PUT /api/config/costs */
 export interface UpdateCostsRequest {
+  subscription_mode?: SubscriptionMode;
   daily_limit_usd?: number;
   hourly_limit_usd?: number;
+  weekly_compute_hours_limit?: number;
+  hourly_request_limit?: number;
   alert_threshold_pct?: number;
 }
 
