@@ -1,26 +1,52 @@
 <!-- Focus Mode - Full-screen single decision interface with auto-advance -->
 <script>
+  import { onMount, onDestroy, tick } from 'svelte';
   import { goto } from '$app/navigation';
   import DecisionCard from '$lib/components/DecisionCard.svelte';
-  import { mockDecisions } from '$lib/data/decisions.js';
-  import { getNextDecision } from '$lib/utils/chaining.js';
+
+  // Import stores
+  import {
+    decisionStore,
+    decisions,
+    pendingDecisions,
+    queueStats,
+    actionStore,
+  } from '$lib/stores';
 
   // State
-  let decisions = [...mockDecisions];
   let currentIndex = 0;
+  let initialTotal = 0;
 
   // Toast notifications
   let toastId = 0;
   let toasts = [];
 
-  // Reactive derived state
-  $: pendingDecisions = decisions.filter(d => d.status === 'pending');
-  $: totalCount = pendingDecisions.length;
-  $: currentDecision = pendingDecisions[currentIndex] || null;
+  // Initialize stores on mount
+  onMount(() => {
+    if (!decisionStore.initialized) {
+      decisionStore.load();
+    }
+    decisionStore.startPolling();
+    // Capture initial total for progress calculation
+    initialTotal = $queueStats.total;
+  });
+
+  onDestroy(() => {
+    decisionStore.stopPolling();
+  });
+
+  // Reactive derived state (from store)
+  $: totalCount = $pendingDecisions.length;
+  $: currentDecision = $pendingDecisions[currentIndex] || null;
 
   // Auto-fix index if out of bounds (e.g. after completion)
-  $: if (currentIndex >= pendingDecisions.length && pendingDecisions.length > 0) {
-     currentIndex = Math.max(0, pendingDecisions.length - 1);
+  $: if (currentIndex >= $pendingDecisions.length && $pendingDecisions.length > 0) {
+     currentIndex = Math.max(0, $pendingDecisions.length - 1);
+  }
+
+  // Track initial total for progress bar
+  $: if (initialTotal === 0 && $queueStats.total > 0) {
+     initialTotal = $queueStats.total;
   }
 
   function showToast(message, type = 'success') {
@@ -29,40 +55,46 @@
     setTimeout(() => { toasts = toasts.filter(t => t.id !== id); }, 2000);
   }
 
-  function handleCardAction(event) {
+  async function handleCardAction(event) {
     const { name, decision, payload } = event.detail;
     showToast(`${name}`, 'success');
-    
-    // 1. Mark as completed
-    const idx = decisions.findIndex(d => d.id === decision.id);
-    if (idx !== -1) {
-       decisions[idx] = { ...decisions[idx], status: 'completed' };
-    }
 
-    // 2. Check for chain
-    const nextDecision = getNextDecision(decision, name);
-    if (nextDecision) {
-       decisions.splice(idx + 1, 0, nextDecision);
-    }
-    
-    // Trigger reactivity
-    decisions = [...decisions];
+    try {
+      // Use decisionStore.resolve() which returns action metadata
+      const response = await decisionStore.resolve(decision.id, { action: name, ...payload });
 
-    // Note: We do NOT increment currentIndex here. 
-    // Since the current item is removed from 'pendingDecisions', 
-    // the item that was at currentIndex+1 shifts down to currentIndex.
-    // Or if we chained, the new item takes the slot.
-    // So we effectively advance by doing nothing to the index.
-    
-    if (pendingDecisions.length === 0 && !nextDecision) {
-       showToast('All decisions completed!', 'success');
-       setTimeout(() => goto('/'), 1500);
+      // Add to action store for undo functionality
+      if (response?.actionId && response?.undoExpiresAt) {
+        actionStore.add({
+          id: response.actionId,
+          decisionId: decision.id,
+          decisionTitle: decision.subject.title,
+          actionName: name,
+          expiresAt: response.undoExpiresAt,
+          timestamp: new Date(),
+        });
+      }
+
+      // Note: We do NOT increment currentIndex here.
+      // Since the current item is removed from 'pendingDecisions',
+      // the item that was at currentIndex+1 shifts down to currentIndex.
+      // Chained decisions from the API are automatically inserted by the store
+      // after the resolved decision, so they naturally appear next.
+      await tick(); // Wait for store to update
+
+      if ($pendingDecisions.length === 0) {
+        showToast('All decisions completed!', 'success');
+        setTimeout(() => goto('/'), 1500);
+      }
+    } catch (error) {
+      showToast(`Error: ${error.message}`, 'error');
+      console.error('Failed to resolve decision:', error);
     }
   }
 
   function handleSkip() {
     showToast('Skipped', 'info');
-    if (currentIndex < pendingDecisions.length - 1) {
+    if (currentIndex < $pendingDecisions.length - 1) {
        currentIndex++;
     } else {
        // Loop back to start if at end
@@ -72,7 +104,7 @@
 
   function handleKeydown(event) {
     if (event.key === 'Escape') { goto('/'); return; }
-    
+
     if (event.target.tagName === 'BODY') {
        if (event.key === 'ArrowRight') handleSkip();
     }
@@ -97,11 +129,11 @@
         <div class="w-48 h-2 bg-zinc-800 rounded-full overflow-hidden">
           <div
             class="h-full bg-amber-500 transition-all duration-300"
-            style="width: {totalCount > 0 ? ((1 - (pendingDecisions.length / mockDecisions.length)) * 100) : 100}%"
+            style="width: {initialTotal > 0 ? ((1 - ($pendingDecisions.length / initialTotal)) * 100) : 100}%"
           ></div>
         </div>
         <span class="text-zinc-400 text-sm font-medium">
-          {pendingDecisions.length} remaining
+          {$pendingDecisions.length} remaining
         </span>
       </div>
     </div>

@@ -1,22 +1,42 @@
 <!-- +page.svelte -->
 <script>
-  import { tick } from 'svelte';
+  import { tick, onMount, onDestroy } from 'svelte';
   import { goto } from '$app/navigation';
   import ClarificationModal from '$lib/components/ClarificationModal.svelte';
   import TaskCreationModal from '$lib/components/TaskCreationModal.svelte';
   import DecisionCard from '$lib/components/DecisionCard.svelte';
-  import { getNextDecision } from '$lib/utils/chaining.js';
-  
+  import LoadingState from '$lib/components/LoadingState.svelte';
+  import ErrorState from '$lib/components/ErrorState.svelte';
+  import EmptyState from '$lib/components/EmptyState.svelte';
+  import SessionBar from '$lib/components/SessionBar.svelte';
+
   import {
-    mockDecisions,
     decisionTypeConfig,
+    decisionTypeGroups,
+    getSortedGroups,
     thingTypeConfig,
     knownSpeakers,
-    allProjects
   } from '$lib/data/decisions.js';
 
-  // Local decisions state
-  let decisions = [...mockDecisions];
+  // Import stores
+  import {
+    decisionStore,
+    decisions,
+    filterStore,
+    filteredDecisions,
+    pendingDecisions,
+    allProjects,
+    hasActiveFilters,
+    queueStats,
+    isLoading,
+    storeError,
+    hasMore,
+    isLoadingMore,
+    sessionStore,
+    actionStore,
+    uiStore,
+  } from '$lib/stores';
+  import { getErrorMessage } from '$lib/utils/errorMessages';
 
   // Modal states
   let showClarificationModal = false;
@@ -24,11 +44,56 @@
   let clarificationTask = null;
   let clarificationQuestions = [];
 
-  // Filter state
+  // Local filter bindings (for two-way binding with inputs)
+  // These sync with the filter store
   let stageFilter = 'all';
+  let stageMode = 'type'; // 'type' | 'group'
   let thingFilter = 'all';
   let projectFilter = 'all';
   let searchQuery = '';
+
+  // Subscribe to filter store to keep local vars in sync
+  const unsubscribeFilters = filterStore.subscribe(f => {
+    stageFilter = f.stage;
+    stageMode = f.stageMode;
+    thingFilter = f.type;
+    projectFilter = f.project;
+    searchQuery = f.search;
+  });
+
+  // Sync local filter changes to store
+  $: filterStore.setStage(stageFilter);
+  $: filterStore.setType(thingFilter);
+  $: filterStore.setProject(projectFilter);
+  $: filterStore.setSearch(searchQuery);
+
+  // Track previous stage filter for reload detection
+  let prevStageFilter = 'all';
+
+  // Reload when stage filter changes to a valid decision type
+  // This passes the type filter to the API for server-side filtering
+  $: {
+    const validDecisionTypes = Object.keys(decisionTypeConfig);
+    const isValidType = validDecisionTypes.includes(stageFilter);
+    const wasValidType = validDecisionTypes.includes(prevStageFilter);
+
+    // Only reload if filter actually changed and is a valid type (or was valid)
+    if (stageFilter !== prevStageFilter && (isValidType || wasValidType || stageFilter === 'all')) {
+      decisionStore.load(isValidType ? { type: stageFilter } : undefined);
+    }
+    prevStageFilter = stageFilter;
+  }
+
+  // Initialize stores on mount
+  onMount(() => {
+    decisionStore.load();
+    decisionStore.startPolling();
+  });
+
+  onDestroy(() => {
+    decisionStore.stopPolling();
+    unsubscribeFilters();
+  });
   
   // Dropdowns
   let activeDropdown = null;
@@ -58,10 +123,6 @@
     activeDropdown = null;
   }
 
-  // Session stats
-  let completedThisSession = 0;
-  let sessionTotal = decisions.filter(d => d.status === 'pending').length;
-
   // Navigation
   let selectedIndex = 0;
   let queueListEl;
@@ -71,9 +132,7 @@
   let commandIndex = 0;
   let showSettings = false;
 
-  // Toasts
-  let toastId = 0;
-  let toasts = [];
+  // Local undo tracking (for quick skip undo)
   let lastAction = null;
 
   // Fuzzy Search
@@ -81,40 +140,27 @@
   let projectSearchQuery = '';
   let projectSearchIndex = 0;
 
-  // Reactive Filters
-  $: pendingDecisions = decisions.filter(d => d.status === 'pending');
-  $: filteredDecisions = pendingDecisions.filter(d => {
-    if (stageFilter !== 'all' && stageFilter !== 'urgent' && d.decisionType !== stageFilter) return false;
-    if (stageFilter === 'urgent' && d.priority !== 'urgent') return false;
-    if (thingFilter !== 'all' && d.subject.type !== thingFilter) return false;
-    if (projectFilter !== 'all' && d.project !== projectFilter) return false;
-    if (searchQuery && !d.subject.title.toLowerCase().includes(searchQuery.toLowerCase())) return false;
-    return true;
-  });
-
-  $: selectedDecision = filteredDecisions.length > 0
-    ? filteredDecisions[Math.min(selectedIndex, filteredDecisions.length - 1)]
+  // Selected decision (derived from store's filtered list)
+  $: selectedDecision = $filteredDecisions.length > 0
+    ? $filteredDecisions[Math.min(selectedIndex, $filteredDecisions.length - 1)]
     : null;
 
   // Reset selection on filter change
-  $: if (filteredDecisions) {
-    selectedIndex = Math.min(selectedIndex, Math.max(0, filteredDecisions.length - 1));
+  $: if ($filteredDecisions) {
+    selectedIndex = Math.min(selectedIndex, Math.max(0, $filteredDecisions.length - 1));
   }
 
-  // Counts
+  // Counts from store
   $: counts = {
-    all: pendingDecisions.length,
-    urgent: pendingDecisions.filter(d => d.priority === 'urgent').length,
-    byStage: Object.keys(decisionTypeConfig).reduce((acc, key) => {
-      acc[key] = pendingDecisions.filter(d => d.decisionType === key).length;
-      return acc;
-    }, {}),
+    all: $queueStats.total,
+    urgent: $queueStats.urgent,
+    byStage: $queueStats.byType,
     byThing: Object.keys(thingTypeConfig).reduce((acc, key) => {
-      acc[key] = pendingDecisions.filter(d => d.subject.type === key).length;
+      acc[key] = $pendingDecisions.filter(d => d.subject.type === key).length;
       return acc;
     }, {}),
-    byProject: allProjects.reduce((acc, proj) => {
-      acc[proj] = pendingDecisions.filter(d => d.project === proj).length;
+    byProject: $allProjects.reduce((acc, proj) => {
+      acc[proj] = $pendingDecisions.filter(d => d.project === proj).length;
       return acc;
     }, {}),
   };
@@ -127,56 +173,37 @@
   }
 
   function selectDecision(decision) {
-    const idx = filteredDecisions.findIndex(d => d.id === decision.id);
+    const idx = $filteredDecisions.findIndex(d => d.id === decision.id);
     if (idx !== -1) selectedIndex = idx;
   }
 
   function clearFilters() {
-    stageFilter = 'all';
-    thingFilter = 'all';
-    projectFilter = 'all';
-    searchQuery = '';
+    filterStore.clear();
   }
-
-  $: hasActiveFilters = stageFilter !== 'all' || thingFilter !== 'all' || projectFilter !== 'all' || searchQuery !== '';
 
   // --- Actions ---
 
-  function showToast(message, type = 'success') {
-    const id = toastId++;
-    toasts = [...toasts, { id, message, type }];
-    setTimeout(() => { toasts = toasts.filter(t => t.id !== id); }, 3000);
-  }
-
   function markAsCompleted(decisionId) {
-    const idx = decisions.findIndex(d => d.id === decisionId);
-    if (idx !== -1) {
-      decisions[idx] = { ...decisions[idx], status: 'completed' };
-      decisions = [...decisions];
-      completedThisSession++;
-    }
+    decisionStore.updateDecision(decisionId, { status: 'completed' });
+    // Note: Session decisions_resolved is tracked server-side
   }
 
   // Handle actions from the DecisionCard component
   async function handleCardAction(event) {
-    const { name, decision, payload } = event.detail;
-    showToast(`${name}: ${decision.subject.title}`, 'success');
-    lastAction = { type: 'action', name, decision, previousIndex: selectedIndex, timestamp: Date.now() };
-    
-    // Mark as completed
-    markAsCompleted(decision.id);
+    const { name, decision, payload, resolution } = event.detail;
 
-    let nextDecisions = [];
+    // Auto-start session on first decision action
+    await sessionStore.autoStartIfNeeded();
 
     // Special handling: Meeting Task Extraction
     if (name === 'Confirm Meeting Tasks' && payload?.selectedTasks) {
        const meetingTitle = decision.subject.title;
        const meetingProject = decision.project;
-       
+
        // Filter extracting only checked tasks
        const tasksToCreate = decision.data.extractedTasks.filter(t => payload.selectedTasks[t.id]);
-       
-       nextDecisions = tasksToCreate.map((task, i) => ({
+
+       const nextDecisions = tasksToCreate.map((task, i) => ({
           id: `d_new_${Date.now()}_${i}`,
           decisionType: 'triage',
           status: 'pending',
@@ -188,7 +215,7 @@
              parentTitle: meetingTitle
           },
           project: meetingProject,
-          priority: task.priority === 'high' ? 'urgent' : 'normal',
+          priority: task.priority === 'high' ? 'critical' : 'normal',
           question: 'Route extracted task',
           created: 'just now',
           data: {
@@ -199,63 +226,94 @@
           },
           _isNew: true
        }));
-       
+
        if (nextDecisions.length > 0) {
-          showToast(`Extracted ${nextDecisions.length} tasks`, 'success');
+          uiStore.success(`Extracted ${nextDecisions.length} tasks`);
        }
-    } 
-    // Standard Chaining
-    else {
-       const chained = getNextDecision(decision, name);
-       if (chained) {
-          nextDecisions = [chained];
+
+       // Insert next decisions via store
+       for (const nextDecision of nextDecisions) {
+         decisionStore.insertAfter(decision.id, nextDecision);
        }
+
+       // Mark the meeting triage decision as completed
+       markAsCompleted(decision.id);
+       moveToNextDecision();
+       return;
     }
 
-    // Insert next decisions
-    if (nextDecisions.length > 0) {
-       const idx = decisions.findIndex(d => d.id === decision.id);
-       if (idx !== -1) {
-          // Splice them in after the completed item
-          decisions.splice(idx + 1, 0, ...nextDecisions);
-          decisions = decisions; // Trigger reactivity
-          // selectedIndex should essentially stay put, as the current item vanished 
-          // and new items appeared in its place.
-       }
-    }
+    // Standard resolution flow - call API through store
+    try {
+      const result = await decisionStore.resolve(decision.id, resolution);
 
-    // Adjust navigation if needed (e.g. if we hit end of list)
-    moveToNextDecision();
+      // Add to undo history
+      if (result.actionId) {
+        actionStore.add({
+          id: result.actionId,
+          decisionId: decision.id,
+          decisionTitle: decision.subject.title,
+          expiresAt: result.undoExpiresAt,
+          timestamp: new Date(),
+          actionName: name
+        });
+      }
+
+      // Show success toast
+      uiStore.success(`${name}: ${decision.subject.title}`);
+
+      // Auto-select first chained decision if any, otherwise move to next
+      if (result.chainedDecisions && result.chainedDecisions.length > 0) {
+        await tick(); // Wait for store to update DOM
+        selectDecision(result.chainedDecisions[0]);
+        scrollToSelected();
+      } else {
+        moveToNextDecision();
+      }
+
+    } catch (error) {
+      // Handle 409 conflict (already resolved)
+      if (error.code === 'DE-DEC-002' || error.status === 409) {
+        uiStore.info('Decision was already completed');
+        // Don't rollback - decision should stay removed
+        moveToNextDecision();
+        return;
+      }
+
+      // Other errors: show error toast (store already rolled back)
+      uiStore.error(getErrorMessage(error));
+      return;
+    }
   }
 
   function handleSkip() {
     if (!selectedDecision) return;
     lastAction = { type: 'skip', decision: selectedDecision, previousIndex: selectedIndex, timestamp: Date.now() };
-    showToast(`Skipped: ${selectedDecision.subject.title}`, 'success');
+    uiStore.success(`Skipped: ${selectedDecision.subject.title}`);
     moveToNextDecision();
   }
 
+  function handleDefer() {
+    // TODO: Open DeferDropdown component
+    uiStore.info('Defer functionality coming soon');
+  }
+
   function handleUndo() {
-    if (!lastAction) { showToast('Nothing to undo', 'info'); return; }
-    if (Date.now() - lastAction.timestamp > 5000) { showToast('Too late to undo', 'info'); lastAction = null; return; }
-    
-    showToast(`Undone`, 'success');
+    if (!lastAction) { uiStore.info('Nothing to undo'); return; }
+    if (Date.now() - lastAction.timestamp > 5000) { uiStore.info('Too late to undo'); lastAction = null; return; }
+
+    uiStore.success('Undone');
     if (lastAction.type !== 'skip') {
-      const idx = decisions.findIndex(d => d.id === lastAction.decision.id);
-      if (idx !== -1) {
-        decisions[idx] = { ...decisions[idx], status: 'pending' };
-        decisions = [...decisions];
-        completedThisSession--;
-      }
+      decisionStore.updateDecision(lastAction.decision.id, { status: 'pending' });
+      // Note: Session decisions_resolved is tracked server-side
     }
-    const idx = filteredDecisions.findIndex(d => d.id === lastAction.decision.id);
+    const idx = $filteredDecisions.findIndex(d => d.id === lastAction.decision.id);
     if (idx !== -1) { selectedIndex = idx; scrollToSelected(); }
     lastAction = null;
   }
 
   function moveToNextDecision() {
-    if (selectedIndex >= filteredDecisions.length - 1) {
-      selectedIndex = Math.max(0, filteredDecisions.length - 2);
+    if (selectedIndex >= $filteredDecisions.length - 1) {
+      selectedIndex = Math.max(0, $filteredDecisions.length - 2);
     }
     scrollToSelected();
   }
@@ -279,9 +337,9 @@
       },
       _isNew: true
     };
-    decisions = [newDecision, ...decisions];
+    decisionStore.addDecision(newDecision);
     showTaskCreationModal = false;
-    showToast(`Task created: ${title}`, 'success');
+    uiStore.success(`Task created: ${title}`);
     tick().then(() => { selectDecision(newDecision); scrollToSelected(); });
   }
 
@@ -305,11 +363,11 @@
   function handleNavigationShortcut(event) {
     switch (event.key) {
       case 'ArrowUp': case 'k': event.preventDefault(); if (selectedIndex > 0) { selectedIndex--; scrollToSelected(); } break;
-      case 'ArrowDown': case 'j': event.preventDefault(); if (selectedIndex < filteredDecisions.length - 1) { selectedIndex++; scrollToSelected(); } break;
+      case 'ArrowDown': case 'j': event.preventDefault(); if (selectedIndex < $filteredDecisions.length - 1) { selectedIndex++; scrollToSelected(); } break;
       case 'Home': event.preventDefault(); selectedIndex = 0; scrollToSelected(); break;
-      case 'End': event.preventDefault(); selectedIndex = Math.max(0, filteredDecisions.length - 1); scrollToSelected(); break;
+      case 'End': event.preventDefault(); selectedIndex = Math.max(0, $filteredDecisions.length - 1); scrollToSelected(); break;
       case 's': event.preventDefault(); handleSkip(); break;
-      case 'c': event.preventDefault(); clearFilters(); showToast('Filters cleared', 'info'); break;
+      case 'c': event.preventDefault(); clearFilters(); uiStore.info('Filters cleared'); break;
       case '?': event.preventDefault(); showSettings = true; break;
       case 'l': case 'ArrowRight': event.preventDefault(); detailPanelEl?.querySelector('input, textarea, select, button.action-btn')?.focus(); break;
       case 'i': event.preventDefault(); goto('/inbox'); break;
@@ -319,21 +377,53 @@
 
   function handleAltShortcut(event) {
     const key = event.key.toLowerCase();
-    const map = { '0': 'all', 'u': 'urgent', 't': 'triage', 's': 'specify', 'r': 'review', 'e': 'enrich', 'c': 'conflict', 'm': 'meeting_triage' };
-    if (map[key]) {
+
+    // Group shortcuts: Alt+0 for all, Alt+1-5 for workflow groups
+    const sortedGroups = getSortedGroups();
+    const groupMap = { '0': 'all' };
+    sortedGroups.forEach(([groupKey], index) => {
+      groupMap[String(index + 1)] = groupKey;
+    });
+
+    if (groupMap[key]) {
       event.preventDefault();
-      stageFilter = map[key];
-      showToast(`Filter: ${stageFilter}`, 'info');
+      if (key === '0') {
+        filterStore.setStageGroup('all');
+        uiStore.info('Filter: All Stages');
+      } else {
+        const groupKey = groupMap[key];
+        const group = decisionTypeGroups[groupKey];
+        filterStore.setStageGroup(groupKey);
+        uiStore.info(`Filter: ${group.label}`);
+      }
+      return;
+    }
+
+    // Legacy type shortcuts (for backwards compatibility)
+    const typeMap = { 's': 'specification', 'r': 'review', 'e': 'enrichment', 'c': 'conflict', 'm': 'meeting_tasks' };
+    if (typeMap[key]) {
+      event.preventDefault();
+      filterStore.setStageType(typeMap[key]);
+      const config = decisionTypeConfig[typeMap[key]];
+      uiStore.info(`Filter: ${config?.label || typeMap[key]}`);
     }
   }
 
   // --- Command Palette ---
   function getCommands() {
+    // Build group filter commands dynamically
+    const groupCommands = getSortedGroups().map(([groupKey, group], index) => ({
+      id: `filter-group-${groupKey}`,
+      label: `Filter: ${group.icon} ${group.label}`,
+      shortcut: `Alt+${index + 1}`,
+      action: () => { filterStore.setStageGroup(groupKey); }
+    }));
+
     return [
       { id: 'nav-up', label: 'Previous item', action: () => { if (selectedIndex > 0) selectedIndex--; scrollToSelected(); } },
-      { id: 'nav-down', label: 'Next item', action: () => { if (selectedIndex < filteredDecisions.length - 1) selectedIndex++; scrollToSelected(); } },
-      { id: 'filter-all', label: 'All Stages', action: () => { stageFilter = 'all'; } },
-      { id: 'filter-urgent', label: 'Urgent Only', action: () => { stageFilter = 'urgent'; } },
+      { id: 'nav-down', label: 'Next item', action: () => { if (selectedIndex < $filteredDecisions.length - 1) selectedIndex++; scrollToSelected(); } },
+      { id: 'filter-all', label: 'Filter: All Stages', shortcut: 'Alt+0', action: () => { filterStore.setStageGroup('all'); } },
+      ...groupCommands,
       { id: 'action-skip', label: 'Skip', action: handleSkip },
       { id: 'view-inbox', label: 'Inbox', action: () => goto('/inbox') },
       { id: 'view-focus', label: 'Focus Mode', action: () => goto('/focus') },
@@ -342,33 +432,36 @@
     ];
   }
   $: commands = getCommands();
-  $: filteredCommands = commandSearch ? commands.filter(c => c.label.toLowerCase().includes(commandSearch.toLowerCase())) : commands;
+  $: paletteFilteredCommands = commandSearch ? commands.filter(c => c.label.toLowerCase().includes(commandSearch.toLowerCase())) : commands;
   
   function handleCommandPaletteKeydown(event) {
     if (event.key === 'ArrowUp') { event.preventDefault(); commandIndex = Math.max(0, commandIndex - 1); }
-    else if (event.key === 'ArrowDown') { event.preventDefault(); commandIndex = Math.min(filteredCommands.length - 1, commandIndex + 1); }
-    else if (event.key === 'Enter') { 
-        event.preventDefault(); 
-        if (filteredCommands[commandIndex]) { 
-            showCommandPalette = false; 
-            filteredCommands[commandIndex].action(); 
-        } 
+    else if (event.key === 'ArrowDown') { event.preventDefault(); commandIndex = Math.min(paletteFilteredCommands.length - 1, commandIndex + 1); }
+    else if (event.key === 'Enter') {
+        event.preventDefault();
+        if (paletteFilteredCommands[commandIndex]) {
+            showCommandPalette = false;
+            paletteFilteredCommands[commandIndex].action();
+        }
     }
   }
-  
+
   $: commandSearch, commandIndex = 0;
 </script>
 
 <svelte:window on:keydown={handleKeydown} on:click={closeDropdowns} />
 
 <div class="min-h-screen bg-zinc-900 text-zinc-100 font-sans">
+  <!-- Session Bar -->
+  <SessionBar />
+
   <!-- Header -->
-  <div class="border-b border-zinc-800 bg-zinc-900/95 backdrop-blur z-20 sticky top-0">
+  <div class="border-b border-zinc-800 bg-zinc-900/95 backdrop-blur z-20 sticky top-8">
     <div class="px-6 py-4">
       <div class="flex items-center justify-between mb-4 gap-6">
         <div>
           <h1 class="text-xl font-semibold tracking-tight">Decision Queue</h1>
-          <p class="text-xs text-zinc-400 mt-1">Orchestrating {filteredDecisions.length} items</p>
+          <p class="text-xs text-zinc-400 mt-1">Orchestrating {$filteredDecisions.length} items</p>
         </div>
 
         <!-- Search -->
@@ -380,44 +473,72 @@
           />
         </div>
 
-        <!-- Stats -->
-        <div class="flex-1 max-w-xs hidden lg:block">
-          <div class="flex justify-between text-[10px] uppercase font-bold text-zinc-500 mb-1">
-            <span>Velocity</span><span>{completedThisSession} / {sessionTotal}</span>
-          </div>
-          <div class="h-1 bg-zinc-800 rounded-full overflow-hidden">
-            <div class="h-full bg-amber-500 transition-all" style="width: {(completedThisSession / Math.max(1, sessionTotal)) * 100}%"></div>
-          </div>
-        </div>
-
         <!-- Actions -->
         <div class="flex items-center gap-3">
            <button on:click={() => showTaskCreationModal = true} class="px-3 py-1.5 bg-amber-600 hover:bg-amber-500 text-white rounded-md text-sm font-medium transition-colors">+ New Task</button>
            <a href="/inbox" class="px-3 py-1.5 bg-zinc-800 hover:bg-zinc-700 text-zinc-300 rounded-md text-sm transition-colors">Inbox</a>
            <a href="/focus" class="px-3 py-1.5 bg-zinc-800 hover:bg-zinc-700 text-zinc-300 rounded-md text-sm transition-colors">Focus</a>
            <a href="/agents" class="px-3 py-1.5 bg-zinc-800 hover:bg-zinc-700 text-zinc-300 rounded-md text-sm transition-colors">Agents</a>
+           <a href="/logs" class="px-3 py-1.5 bg-zinc-800 hover:bg-zinc-700 text-zinc-300 rounded-md text-sm transition-colors">Logs</a>
         </div>
       </div>
 
       <!-- Filters (Restored Dropdowns) -->
       <div class="flex items-center gap-3 relative z-30">
         
-        <!-- Stage Filter -->
+        <!-- Stage Filter (Grouped) -->
         <div class="relative" on:mouseenter={() => openDropdown('stage')} on:mouseleave={closeDropdownWithDelay}>
           <button on:click={(e) => toggleDropdown('stage', e)} class="flex items-center gap-2 px-3 py-1.5 rounded-lg border text-sm font-medium transition-all {stageFilter !== 'all' ? 'bg-amber-600/20 border-amber-600/50 text-amber-200' : 'bg-zinc-800 border-zinc-700 text-zinc-400 hover:text-zinc-200'}">
-            {#if stageFilter === 'all'}<span>Stage</span>{:else if stageFilter === 'urgent'}<span>🔥 Urgent</span>{:else}<span>{decisionTypeConfig[stageFilter]?.icon} {decisionTypeConfig[stageFilter]?.label}</span>{/if}
+            {#if stageFilter === 'all'}
+              <span>Stage</span>
+            {:else if stageFilter === 'urgent'}
+              <span>Urgent</span>
+            {:else if stageMode === 'group'}
+              <span>{decisionTypeGroups[stageFilter]?.icon} {decisionTypeGroups[stageFilter]?.label}</span>
+            {:else}
+              <span>{decisionTypeConfig[stageFilter]?.icon} {decisionTypeConfig[stageFilter]?.label}</span>
+            {/if}
             <span class="text-[10px] opacity-60">▼</span>
           </button>
           {#if activeDropdown === 'stage'}
-            <div class="absolute top-full left-0 mt-1 w-56 bg-zinc-800 border border-zinc-700 rounded-xl shadow-xl overflow-hidden py-1">
-              <button on:click={() => { stageFilter = 'all'; closeDropdowns(); }} class="w-full text-left px-4 py-2 text-sm hover:bg-zinc-700 transition-colors flex justify-between {stageFilter === 'all' ? 'text-amber-400' : 'text-zinc-300'}">All Stages {#if stageFilter === 'all'}✓{/if}</button>
+            <div class="absolute top-full left-0 mt-1 w-64 bg-zinc-800 border border-zinc-700 rounded-xl shadow-xl overflow-hidden py-1 max-h-96 overflow-y-auto">
+              <!-- All Stages -->
+              <button on:click={() => { filterStore.setStageGroup('all'); closeDropdowns(); }} class="w-full text-left px-4 py-2 text-sm hover:bg-zinc-700 transition-colors flex justify-between {stageFilter === 'all' ? 'text-amber-400' : 'text-zinc-300'}">
+                <span>All Stages</span>
+                <span class="text-xs text-zinc-500">Alt+0</span>
+              </button>
               <div class="h-px bg-zinc-700/50 my-1 mx-2"></div>
-              <button on:click={() => { stageFilter = 'urgent'; closeDropdowns(); }} class="w-full text-left px-4 py-2 text-sm hover:bg-zinc-700 transition-colors flex justify-between {stageFilter === 'urgent' ? 'text-amber-400' : 'text-zinc-300'}">🔥 Urgent {#if stageFilter === 'urgent'}✓{/if}</button>
-              <div class="h-px bg-zinc-700/50 my-1 mx-2"></div>
-              {#each Object.entries(decisionTypeConfig) as [key, config]}
-                <button on:click={() => { stageFilter = key; closeDropdowns(); }} class="w-full text-left px-4 py-2 text-sm hover:bg-zinc-700 transition-colors flex justify-between {stageFilter === key ? 'text-amber-400' : 'text-zinc-300'}">
-                  <span>{config.icon} {config.label}</span>{#if stageFilter === key}✓{/if}
+
+              <!-- Grouped Decision Types -->
+              {#each getSortedGroups() as [groupKey, group], groupIndex}
+                <!-- Group Header (clickable to filter entire group) -->
+                <button
+                  on:click={() => { filterStore.setStageGroup(groupKey); closeDropdowns(); }}
+                  class="w-full text-left px-4 py-2 text-sm hover:bg-zinc-700 transition-colors flex justify-between items-center {stageFilter === groupKey && stageMode === 'group' ? 'text-amber-400 bg-amber-900/10' : 'text-zinc-200'}"
+                >
+                  <span class="flex items-center gap-2 font-medium">
+                    <span>{group.icon}</span>
+                    <span>{group.label}</span>
+                  </span>
+                  <span class="text-xs text-zinc-500">Alt+{groupIndex + 1}</span>
                 </button>
+
+                <!-- Individual Types (indented) -->
+                {#each group.types as typeKey}
+                  {#if decisionTypeConfig[typeKey] && !decisionTypeConfig[typeKey].deprecated}
+                    <button
+                      on:click={() => { filterStore.setStageType(typeKey); closeDropdowns(); }}
+                      class="w-full text-left pl-8 pr-4 py-1.5 text-sm hover:bg-zinc-700 transition-colors flex justify-between {stageFilter === typeKey && stageMode === 'type' ? 'text-amber-400' : 'text-zinc-400'}"
+                    >
+                      <span>{decisionTypeConfig[typeKey].icon} {decisionTypeConfig[typeKey].label}</span>
+                      {#if stageFilter === typeKey && stageMode === 'type'}<span class="text-amber-400">check</span>{/if}
+                    </button>
+                  {/if}
+                {/each}
+
+                {#if groupIndex < getSortedGroups().length - 1}
+                  <div class="h-px bg-zinc-700/50 my-1 mx-2"></div>
+                {/if}
               {/each}
             </div>
           {/if}
@@ -452,7 +573,7 @@
             <div class="absolute top-full left-0 mt-1 w-64 bg-zinc-800 border border-zinc-700 rounded-xl shadow-xl overflow-hidden py-1 max-h-80 overflow-y-auto">
               <button on:click={() => { projectFilter = 'all'; closeDropdowns(); }} class="w-full text-left px-4 py-2 text-sm hover:bg-zinc-700 transition-colors flex justify-between {projectFilter === 'all' ? 'text-amber-400' : 'text-zinc-300'}">All Projects {#if projectFilter === 'all'}✓{/if}</button>
               <div class="h-px bg-zinc-700/50 my-1 mx-2"></div>
-              {#each allProjects as project}
+              {#each $allProjects as project}
                 <button on:click={() => { projectFilter = project; closeDropdowns(); }} class="w-full text-left px-4 py-2 text-sm hover:bg-zinc-700 transition-colors flex justify-between {projectFilter === project ? 'text-amber-400' : 'text-zinc-300'}">
                   <span class="truncate">{project}</span>{#if projectFilter === project}✓{/if}
                 </button>
@@ -461,7 +582,7 @@
           {/if}
         </div>
 
-        {#if hasActiveFilters}
+        {#if $hasActiveFilters}
           <div class="h-6 w-px bg-zinc-800 mx-1"></div>
           <button on:click={clearFilters} class="text-xs text-amber-500 hover:text-amber-400 font-medium px-2 py-1 rounded hover:bg-amber-900/20 transition-colors">Reset</button>
         {/if}
@@ -470,16 +591,34 @@
   </div>
 
   <div class="flex h-[calc(100vh-140px)]">
-    <!-- Queue List -->
-    <div class="w-80 border-r border-zinc-800 flex flex-col bg-zinc-900" bind:this={queueListEl}>
-       <div class="flex-1 overflow-y-auto">
-         {#if filteredDecisions.length === 0}
-            <div class="p-8 text-center text-zinc-500">
-               <div class="text-2xl mb-2">✨</div>
-               <p class="text-sm">Queue empty</p>
-            </div>
-         {:else}
-            {#each filteredDecisions as decision, index}
+    <!-- Loading State - full width skeleton -->
+    {#if $isLoading && $decisions.length === 0}
+      <LoadingState count={5} showDetail={true} />
+
+    <!-- Error State -->
+    {:else if $storeError}
+      <div class="flex-1 flex items-center justify-center">
+        <ErrorState error={$storeError} onRetry={() => decisionStore.refresh()} />
+      </div>
+
+    <!-- Empty State: All caught up -->
+    {:else if $pendingDecisions.length === 0}
+      <div class="flex-1 flex items-center justify-center">
+        <EmptyState variant="empty" />
+      </div>
+
+    <!-- Empty State: No filter matches -->
+    {:else if $filteredDecisions.length === 0 && $hasActiveFilters}
+      <div class="flex-1 flex items-center justify-center">
+        <EmptyState variant="filtered" onClearFilters={clearFilters} />
+      </div>
+
+    <!-- Normal State: Show queue list and detail panel -->
+    {:else}
+      <!-- Queue List -->
+      <div class="w-80 border-r border-zinc-800 flex flex-col bg-zinc-900" bind:this={queueListEl}>
+         <div class="flex-1 overflow-y-auto">
+            {#each $filteredDecisions as decision, index (decision.id)}
                {@const config = decisionTypeConfig[decision.decisionType]}
                <button
                   on:click={() => selectDecision(decision)}
@@ -491,7 +630,7 @@
                   {#if selectedIndex === index}
                     <div class="absolute left-0 top-0 bottom-0 w-1 {config.bgClass.replace('/20','')}"></div>
                   {/if}
-                  
+
                   <div class="flex items-center gap-2 mb-1">
                     <span class="text-[10px] uppercase font-bold tracking-wider text-zinc-500">{config.label}</span>
                     {#if decision.priority === 'urgent'}<span class="text-[10px] text-red-400 font-bold">URGENT</span>{/if}
@@ -501,27 +640,45 @@
                   <div class="text-xs text-zinc-500 truncate mt-0.5">{decision.question}</div>
                </button>
             {/each}
-         {/if}
-       </div>
-    </div>
 
-    <!-- Active Decision Panel -->
-    <div class="flex-1 bg-zinc-900/30 overflow-y-auto" bind:this={detailPanelEl}>
-       {#if selectedDecision}
-         <DecisionCard 
-            decision={selectedDecision} 
-            on:action={handleCardAction} 
-            on:skip={handleSkip} 
-         />
-       {:else}
-         <div class="flex items-center justify-center h-full text-zinc-500">
-           <div class="text-center">
-              <div class="text-4xl mb-4 opacity-30">⚡</div>
-              <p>Select an item to start processing</p>
-           </div>
+            <!-- Load More Button -->
+            {#if $hasMore}
+              <div class="p-4 border-t border-zinc-800">
+                <button
+                  on:click={() => decisionStore.loadMore()}
+                  disabled={$isLoadingMore}
+                  class="w-full py-2 px-4 bg-zinc-800 hover:bg-zinc-700 disabled:opacity-50 disabled:cursor-not-allowed text-zinc-300 text-sm rounded-lg transition-colors"
+                >
+                  {#if $isLoadingMore}
+                    Loading...
+                  {:else}
+                    Load More
+                  {/if}
+                </button>
+              </div>
+            {/if}
          </div>
-       {/if}
-    </div>
+      </div>
+
+      <!-- Active Decision Panel -->
+      <div class="flex-1 bg-zinc-900/30 overflow-y-auto" bind:this={detailPanelEl}>
+         {#if selectedDecision}
+           <DecisionCard
+              decision={selectedDecision}
+              on:action={handleCardAction}
+              on:skip={handleSkip}
+              on:defer={handleDefer}
+           />
+         {:else}
+           <div class="flex items-center justify-center h-full text-zinc-500">
+             <div class="text-center">
+                <div class="text-4xl mb-4 opacity-30">⚡</div>
+                <p>Select an item to start processing</p>
+             </div>
+           </div>
+         {/if}
+      </div>
+    {/if}
   </div>
 </div>
 
@@ -556,12 +713,12 @@
 
       <!-- Command list -->
       <div class="max-h-80 overflow-y-auto p-2">
-        {#if filteredCommands.length === 0}
+        {#if paletteFilteredCommands.length === 0}
           <div class="text-center py-4 text-zinc-500">
             No commands found
           </div>
         {:else}
-          {#each filteredCommands as command, i}
+          {#each paletteFilteredCommands as command, i}
             <button
               class="w-full text-left px-3 py-2 rounded flex items-center justify-between transition-colors
                      {commandIndex === i ? 'bg-amber-600/20 text-amber-100' : 'hover:bg-zinc-700 text-zinc-200'}"
@@ -569,9 +726,12 @@
               on:mouseenter={() => commandIndex = i}
             >
               <div class="flex items-center gap-3">
-                <span class="text-zinc-500">►</span>
+                <span class="text-zinc-500">-</span>
                 <span>{command.label}</span>
               </div>
+              {#if command.shortcut}
+                <kbd class="text-xs bg-zinc-700 px-1.5 py-0.5 rounded text-zinc-400">{command.shortcut}</kbd>
+              {/if}
             </button>
           {/each}
         {/if}
@@ -596,11 +756,27 @@
         <h2 class="text-lg font-semibold text-zinc-100">Keyboard Shortcuts</h2>
         <button on:click={() => showSettings = false} class="text-zinc-500 hover:text-zinc-300">×</button>
       </div>
-      <div class="space-y-2 text-sm text-zinc-300">
-        <div class="flex justify-between"><span>Open Command Palette</span><kbd class="bg-zinc-700 px-2 rounded">o</kbd></div>
-        <div class="flex justify-between"><span>Navigation</span><kbd class="bg-zinc-700 px-2 rounded">↑ / ↓</kbd></div>
-        <div class="flex justify-between"><span>Skip Decision</span><kbd class="bg-zinc-700 px-2 rounded">s</kbd></div>
-        <div class="flex justify-between"><span>Focus Search</span><kbd class="bg-zinc-700 px-2 rounded">/</kbd></div>
+      <div class="space-y-4 text-sm text-zinc-300">
+        <div class="space-y-2">
+          <div class="text-xs text-zinc-500 uppercase tracking-wider">Navigation</div>
+          <div class="flex justify-between"><span>Previous / Next item</span><kbd class="bg-zinc-700 px-2 rounded">k / j</kbd></div>
+          <div class="flex justify-between"><span>Open Command Palette</span><kbd class="bg-zinc-700 px-2 rounded">o</kbd></div>
+          <div class="flex justify-between"><span>Focus Search</span><kbd class="bg-zinc-700 px-2 rounded">/</kbd></div>
+        </div>
+        <div class="space-y-2">
+          <div class="text-xs text-zinc-500 uppercase tracking-wider">Actions</div>
+          <div class="flex justify-between"><span>Skip Decision</span><kbd class="bg-zinc-700 px-2 rounded">s</kbd></div>
+          <div class="flex justify-between"><span>Clear Filters</span><kbd class="bg-zinc-700 px-2 rounded">c</kbd></div>
+        </div>
+        <div class="space-y-2">
+          <div class="text-xs text-zinc-500 uppercase tracking-wider">Stage Filters</div>
+          <div class="flex justify-between"><span>All Stages</span><kbd class="bg-zinc-700 px-2 rounded">Alt+0</kbd></div>
+          <div class="flex justify-between"><span>Intake</span><kbd class="bg-zinc-700 px-2 rounded">Alt+1</kbd></div>
+          <div class="flex justify-between"><span>Refinement</span><kbd class="bg-zinc-700 px-2 rounded">Alt+2</kbd></div>
+          <div class="flex justify-between"><span>Execution</span><kbd class="bg-zinc-700 px-2 rounded">Alt+3</kbd></div>
+          <div class="flex justify-between"><span>Verification</span><kbd class="bg-zinc-700 px-2 rounded">Alt+4</kbd></div>
+          <div class="flex justify-between"><span>Exceptions</span><kbd class="bg-zinc-700 px-2 rounded">Alt+5</kbd></div>
+        </div>
       </div>
     </div>
   </div>

@@ -1,79 +1,17 @@
 <script>
-  import { onMount } from 'svelte';
-  
-  // Mock Agent Data
-  let agents = [
-    { 
-      id: 'a1', 
-      name: 'TriageWorker', 
-      role: 'In-Basket Processor', 
-      status: 'idle', 
-      currentTask: 'Waiting for new items...', 
-      lastActive: '2m ago',
-      logs: ['Checked inbox (0 new)', 'Processed "Invoice.pdf"', 'Sleeping...']
-    },
-    { 
-      id: 'a2', 
-      name: 'ContextEnricher', 
-      role: 'Knowledge Graph Linker', 
-      status: 'running', 
-      currentTask: 'Analyzing "Q1 Report" context', 
-      lastActive: 'Now',
-      progress: 45,
-      logs: ['Found related project "Q1 Planning"', 'Retrieving meeting notes...', 'Linking entities...']
-    },
-    { 
-      id: 'a3', 
-      name: 'MetricExtractor', 
-      role: 'Data Miner', 
-      status: 'error', 
-      currentTask: 'Failed to parse CSV', 
-      lastActive: '5m ago',
-      logs: ['Reading "sales_data.csv"', 'Error: Malformed header row', 'Retrying...', 'Failed.']
-    },
-    { 
-      id: 'a4', 
-      name: 'Scribe', 
-      role: 'Documentation Agent', 
-      status: 'running', 
-      currentTask: 'Updating API docs', 
-      lastActive: 'Now',
-      progress: 78,
-      logs: ['Parsed source code', 'Generating markdown...', 'Diffing changes...']
-    }
-  ];
+  import { onMount, onDestroy } from 'svelte';
+  import { agents, agentStore } from '$lib/stores';
+  import AgentCard from '$lib/components/AgentCard.svelte';
 
-  // Simulate live updates
+  // Start idle detection when page mounts
   onMount(() => {
-    const interval = setInterval(() => {
-      agents = agents.map(agent => {
-        if (agent.status === 'running') {
-          // Update progress
-          const newProgress = (agent.progress || 0) + Math.floor(Math.random() * 5);
-          if (newProgress >= 100) {
-             return { ...agent, status: 'idle', progress: 0, currentTask: 'Waiting...' };
-          }
-          return { ...agent, progress: newProgress };
-        }
-        // Randomly start idle agents
-        if (agent.status === 'idle' && Math.random() > 0.9) {
-           return { ...agent, status: 'running', progress: 0, currentTask: 'Processing new job...' };
-        }
-        return agent;
-      });
-    }, 1000);
-
-    return () => clearInterval(interval);
+    agentStore.startIdleDetection();
   });
 
-  function getStatusColor(status) {
-    switch (status) {
-      case 'running': return 'text-green-400 border-green-500/50 bg-green-900/20';
-      case 'idle': return 'text-zinc-400 border-zinc-700 bg-zinc-800/50';
-      case 'error': return 'text-red-400 border-red-500/50 bg-red-900/20';
-      default: return 'text-zinc-400';
-    }
-  }
+  // Stop idle detection when page unmounts
+  onDestroy(() => {
+    agentStore.stopIdleDetection();
+  });
 </script>
 
 <div class="min-h-screen bg-zinc-900 text-zinc-100 p-8 font-sans">
@@ -90,53 +28,26 @@
     </div>
 
     <!-- Grid -->
-    <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-      {#each agents as agent (agent.id)}
-        <div class="rounded-xl border p-5 flex flex-col h-64 transition-all {getStatusColor(agent.status)} border-opacity-50">
-          
-          <!-- Header -->
-          <div class="flex justify-between items-start mb-4">
-            <div>
-              <div class="font-bold text-lg">{agent.name}</div>
-              <div class="text-xs opacity-70 uppercase tracking-wide">{agent.role}</div>
-            </div>
-            <div class="flex items-center gap-2">
-              {#if agent.status === 'running'}
-                <span class="relative flex h-3 w-3">
-                  <span class="animate-ping absolute inline-flex h-full w-full rounded-full bg-green-400 opacity-75"></span>
-                  <span class="relative inline-flex rounded-full h-3 w-3 bg-green-500"></span>
-                </span>
-              {/if}
-              <span class="text-xs font-mono uppercase px-2 py-0.5 rounded bg-black/20 border border-black/10">
-                {agent.status}
-              </span>
-            </div>
+    {#if $agents.length === 0}
+      <div class="flex items-center justify-center py-24">
+        <div class="text-center">
+          <div class="text-5xl mb-4 opacity-40">
+            <span role="img" aria-label="Robot">🤖</span>
           </div>
-
-          <!-- Current Task -->
-          <div class="mb-auto">
-            <div class="text-sm opacity-90 truncate font-medium">{agent.currentTask}</div>
-            <div class="text-xs opacity-60 mt-1">Last active: {agent.lastActive}</div>
-            
-            {#if agent.status === 'running'}
-              <div class="mt-3 h-1.5 w-full bg-black/20 rounded-full overflow-hidden">
-                <div 
-                  class="h-full bg-current transition-all duration-500" 
-                  style="width: {agent.progress}%"
-                ></div>
-              </div>
-            {/if}
-          </div>
-
-          <!-- Logs Preview -->
-          <div class="mt-4 pt-4 border-t border-black/10 text-xs font-mono opacity-80 space-y-1">
-            {#each agent.logs.slice(-2) as log}
-              <div class="truncate">> {log}</div>
-            {/each}
-          </div>
-
+          <h3 class="text-lg font-medium text-zinc-200 mb-2">
+            No Active Agents
+          </h3>
+          <p class="text-sm text-zinc-400">
+            Agents will appear here when they start processing tasks.
+          </p>
         </div>
-      {/each}
-    </div>
+      </div>
+    {:else}
+      <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+        {#each $agents as agent (agent.id)}
+          <AgentCard {agent} />
+        {/each}
+      </div>
+    {/if}
   </div>
 </div>

@@ -1,15 +1,81 @@
 <script>
   import { decisionTypeConfig, thingTypeConfig, allProjects } from '$lib/data/decisions.js';
   import CriteriaChecklist from './CriteriaChecklist.svelte';
+  import LoadingSpinner from './LoadingSpinner.svelte';
+  import SpeakerAutocomplete from './SpeakerAutocomplete.svelte';
   import { createEventDispatcher } from 'svelte';
+  import { buildResolutionPayload } from '$lib/utils/resolution';
+  import { chainHistory, WORKFLOW_ORDER } from '$lib/stores';
+
+  // New modular card components (Unit 12)
+  import {
+    CheckpointCard,
+    ApprovalCard,
+    ConflictCard,
+    CategorizeCard
+  } from './cards';
+
+  // Forward action events from sub-cards
+  function handleSubCardAction(event) {
+    const { name, decision: decisionData, payload } = event.detail;
+    handleAction(name, payload);
+  }
+
+  function handleSubCardDefer() {
+    dispatch('defer');
+  }
 
   export let decision;
-  
+
   const dispatch = createEventDispatcher();
+
+  // Loading state - disables all buttons during API call
+  let actionInProgress = false;
 
   // Local state for meeting tasks
   let selectedTasks = {};
-  
+
+  // Form data bindings for each card type
+  // Triage
+  let triageProject = '';
+  let triagePriority = '';
+
+  // Specify
+  let specAiSpec = {};
+  let specSuccessCriteria = [];
+
+  // Review
+  let reviewFeedback = '';
+
+  // Clarifying
+  let clarifyAnswers = {};
+
+  // Enrich
+  let enrichProject = '';
+  let enrichDate = '';
+  let enrichSpeakers = [];
+
+  // Initialize form data when decision changes
+  $: if (decision) {
+    const d = decision.data || {};
+
+    // Triage
+    triageProject = d.suggestedProject || '';
+    triagePriority = d.suggestedPriority || 'p3';
+
+    // Specify
+    specAiSpec = d.aiSpec ? { ...d.aiSpec } : {};
+    specSuccessCriteria = d.successCriteria ? [...d.successCriteria] : [];
+
+    // Enrich
+    enrichProject = d.suggestedProject || '';
+    enrichDate = d.date || '';
+    enrichSpeakers = d.speakers ? d.speakers.map(s => ({ ...s })) : [];
+
+    // Reset clarify answers
+    clarifyAnswers = {};
+  }
+
   $: if (decision && decision.decisionType === 'meeting_triage' && decision.data?.extractedTasks) {
      // Initialize selected tasks based on data
      decision.data.extractedTasks.forEach(t => {
@@ -19,8 +85,73 @@
      });
   }
 
-  function handleAction(actionName, payload = null) {
-    dispatch('action', { name: actionName, decision, payload });
+  /**
+   * Collect form data based on decision type.
+   */
+  function collectFormData(actionName) {
+    const formData = {};
+
+    switch (decision.decisionType) {
+      case 'triage':
+        formData.project = triageProject;
+        formData.priority = triagePriority;
+        break;
+      case 'specify':
+        formData.aiSpec = specAiSpec;
+        formData.successCriteria = specSuccessCriteria;
+        break;
+      case 'review':
+        formData.feedback = reviewFeedback;
+        break;
+      case 'clarifying':
+      case 'checkpoint':
+        formData.answers = clarifyAnswers;
+        break;
+      case 'enrich':
+        formData.project = enrichProject;
+        formData.date = enrichDate;
+        formData.speakers = enrichSpeakers;
+        break;
+      case 'meeting_triage':
+        formData.selectedTasks = Object.entries(selectedTasks)
+          .filter(([_, selected]) => selected)
+          .map(([id]) => id);
+        break;
+    }
+
+    return formData;
+  }
+
+  /**
+   * Handle action with loading state and form data collection.
+   */
+  async function handleAction(actionName, payload = null) {
+    // Prevent double-clicks
+    if (actionInProgress) return;
+
+    actionInProgress = true;
+
+    try {
+      // Collect form data
+      const formData = collectFormData(actionName);
+
+      // Build resolution payload
+      const resolutionPayload = buildResolutionPayload(decision, actionName, formData);
+
+      // Dispatch action with all data
+      dispatch('action', {
+        name: actionName,
+        decision,
+        payload: payload || formData,
+        resolution: resolutionPayload.resolution
+      });
+    } finally {
+      // Reset loading after a short delay to allow parent to handle
+      // The parent will set loading via store actions
+      setTimeout(() => {
+        actionInProgress = false;
+      }, 100);
+    }
   }
 
   function toggleTask(taskId) {
@@ -33,29 +164,56 @@
   $: thingConfig = thingTypeConfig[decision.subject.type];
   $: data = decision.data || {};
 
-  // Workflow stages for the progress bar
-  const workflow = ['triage', 'specify', 'verifying', 'review'];
+  // Deferral limit check (5 max deferrals)
+  $: deferDisabled = (decision.deferCount || 0) >= 5;
+  $: remainingDeferrals = 5 - (decision.deferCount || 0);
+
+  // Workflow stages for the progress bar (subject-based tracking)
+  const workflow = WORKFLOW_ORDER;
+
+  // Get completed stages for this subject from chain history
+  $: subjectHistory = $chainHistory.get(decision.subject.id) || [];
+  $: completedTypes = subjectHistory.map(s => s.type);
+
+  // Current step is where this decision type falls in the workflow
   $: currentStep = workflow.indexOf(decision.decisionType);
   $: showProgress = currentStep !== -1;
-  $: progressPercent = ((currentStep + 1) / (workflow.length + 1)) * 100;
+
+  // Check if a step is completed (from history or current is past it)
+  $: isStepCompleted = (stepIndex) => {
+    const stepType = workflow[stepIndex];
+    return completedTypes.includes(stepType) || stepIndex < currentStep;
+  };
+
+  // Calculate progress including completed history
+  $: completedCount = completedTypes.length;
+  $: progressPercent = ((completedCount + 1) / (workflow.length + 1)) * 100;
 </script>
 
 <div class="max-w-4xl mx-auto p-8">
-  <!-- Discreet Workflow Progress -->
+  <!-- Discreet Workflow Progress (subject-based) -->
   {#if showProgress}
     <div class="mb-6">
       <div class="flex justify-between items-end mb-2">
         <div class="flex gap-4">
           {#each workflow as step, i}
+            {@const isCompleted = isStepCompleted(i)}
+            {@const isCurrent = i === currentStep}
             <div class="flex flex-col gap-1">
-              <span class="text-[10px] uppercase font-bold tracking-widest {i <= currentStep ? 'text-amber-500' : 'text-zinc-600'}">
+              <span class="text-[10px] uppercase font-bold tracking-widest {isCompleted ? 'text-green-500' : isCurrent ? 'text-amber-500' : 'text-zinc-600'}">
                 {step}
               </span>
-              <div class="h-1 w-12 rounded-full {i <= currentStep ? 'bg-amber-500' : 'bg-zinc-800'} transition-all duration-500"></div>
+              <div class="h-1 w-12 rounded-full {isCompleted ? 'bg-green-500' : isCurrent ? 'bg-amber-500' : 'bg-zinc-800'} transition-all duration-500"></div>
             </div>
           {/each}
         </div>
-        <span class="text-[10px] font-mono text-zinc-500 uppercase">Stage {currentStep + 1} of 4</span>
+        <span class="text-[10px] font-mono text-zinc-500 uppercase">
+          {#if completedCount > 0}
+            {completedCount} completed
+          {:else}
+            Stage {currentStep + 1} of {workflow.length}
+          {/if}
+        </span>
       </div>
     </div>
   {/if}
@@ -109,16 +267,24 @@
               <div class="flex gap-4 mt-4">
                  <div class="flex-1">
                     <label class="block text-xs text-zinc-500 mb-1">Project</label>
-                    <select class="w-full bg-zinc-800 border border-zinc-700 rounded p-2 text-sm text-zinc-300 outline-none focus:border-amber-500">
-                       <option>{data.suggestedProject || 'Select...'}</option>
-                       {#each allProjects as p}<option>{p}</option>{/each}
+                    <select
+                      bind:value={triageProject}
+                      disabled={actionInProgress}
+                      class="w-full bg-zinc-800 border border-zinc-700 rounded p-2 text-sm text-zinc-300 outline-none focus:border-amber-500 disabled:opacity-50"
+                    >
+                       <option value="">{data.suggestedProject || 'Select...'}</option>
+                       {#each allProjects as p}<option value={p}>{p}</option>{/each}
                     </select>
                  </div>
                  <div class="w-24">
                     <label class="block text-xs text-zinc-500 mb-1">Priority</label>
-                    <select class="w-full bg-zinc-800 border border-zinc-700 rounded p-2 text-sm text-zinc-300 outline-none focus:border-amber-500">
-                       <option>{data.suggestedPriority || 'p3'}</option>
-                       <option>p1</option><option>p2</option><option>p3</option>
+                    <select
+                      bind:value={triagePriority}
+                      disabled={actionInProgress}
+                      class="w-full bg-zinc-800 border border-zinc-700 rounded p-2 text-sm text-zinc-300 outline-none focus:border-amber-500 disabled:opacity-50"
+                    >
+                       <option value={data.suggestedPriority || 'p3'}>{data.suggestedPriority || 'p3'}</option>
+                       <option value="p1">p1</option><option value="p2">p2</option><option value="p3">p3</option>
                     </select>
                  </div>
               </div>
@@ -126,9 +292,28 @@
         </div>
 
         <div class="pt-6 border-t border-zinc-800 flex justify-end gap-3">
-           <button on:click={() => dispatch('skip')} class="px-4 py-2 text-zinc-400 hover:text-white text-sm transition-colors">Defer</button>
-           <button on:click={() => handleAction('Archive')} class="px-4 py-2 bg-zinc-800 hover:bg-zinc-700 text-white rounded-lg text-sm border border-zinc-700 transition-colors">Archive</button>
-           <button on:click={() => handleAction('Proceed')} class="px-4 py-2 bg-amber-600 hover:bg-amber-500 text-white rounded-lg text-sm font-medium transition-colors">Proceed to Spec &rarr;</button>
+           <button
+             on:click={() => dispatch('defer')}
+             disabled={actionInProgress || deferDisabled}
+             class="px-4 py-2 text-zinc-400 hover:text-white text-sm transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+             title={deferDisabled ? 'Maximum deferrals reached (5)' : `${remainingDeferrals} deferrals remaining`}
+           >
+             Defer {#if deferDisabled}(limit){/if}
+           </button>
+           <button
+             on:click={() => handleAction('Archive')}
+             disabled={actionInProgress}
+             class="px-4 py-2 bg-zinc-800 hover:bg-zinc-700 text-white rounded-lg text-sm border border-zinc-700 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+           >
+             {#if actionInProgress}...{:else}Archive{/if}
+           </button>
+           <button
+             on:click={() => handleAction('Proceed')}
+             disabled={actionInProgress}
+             class="px-4 py-2 bg-amber-600 hover:bg-amber-500 text-white rounded-lg text-sm font-medium transition-colors disabled:opacity-50 disabled:cursor-not-allowed inline-flex items-center gap-2"
+           >
+             {#if actionInProgress}<LoadingSpinner size="sm" /> Processing...{:else}Proceed to Spec &rarr;{/if}
+           </button>
         </div>
 
      <!-- 2. SPECIFICATION CARD -->
@@ -163,10 +348,22 @@
         {/if}
 
         <div class="pt-6 border-t border-zinc-800 flex justify-between items-center">
-           <button class="text-sm text-zinc-500 hover:text-zinc-300">Back to Inbox</button>
+           <button disabled={actionInProgress} class="text-sm text-zinc-500 hover:text-zinc-300 disabled:opacity-50">Back to Inbox</button>
            <div class="flex gap-3">
-              <button class="px-4 py-2 bg-zinc-800 hover:bg-zinc-700 text-white rounded-lg text-sm border border-zinc-700">Save Draft</button>
-              <button on:click={() => handleAction('Save & Continue')} class="px-6 py-2 bg-amber-600 hover:bg-amber-500 text-white rounded-lg text-sm font-medium">Save & Continue &rarr;</button>
+              <button
+                on:click={() => handleAction('Save Draft')}
+                disabled={actionInProgress}
+                class="px-4 py-2 bg-zinc-800 hover:bg-zinc-700 text-white rounded-lg text-sm border border-zinc-700 disabled:opacity-50 disabled:cursor-not-allowed"
+              >
+                Save Draft
+              </button>
+              <button
+                on:click={() => handleAction('Save & Continue')}
+                disabled={actionInProgress}
+                class="px-6 py-2 bg-amber-600 hover:bg-amber-500 text-white rounded-lg text-sm font-medium disabled:opacity-50 disabled:cursor-not-allowed inline-flex items-center gap-2"
+              >
+                {#if actionInProgress}<LoadingSpinner size="sm" /> Processing...{:else}Save & Continue &rarr;{/if}
+              </button>
            </div>
         </div>
 
@@ -204,8 +401,20 @@
            </div>
 
            <div class="pt-6 border-t border-zinc-800 flex justify-end gap-3">
-              <button class="px-4 py-2 text-zinc-400 hover:text-white text-sm">Answer Later</button>
-              <button on:click={() => handleAction('Submit Answers')} class="px-6 py-2 bg-yellow-600 hover:bg-yellow-500 text-white rounded-lg text-sm font-medium">Submit & Start &rarr;</button>
+              <button
+                on:click={() => dispatch('defer')}
+                disabled={actionInProgress || deferDisabled}
+                class="px-4 py-2 text-zinc-400 hover:text-white text-sm disabled:opacity-50 disabled:cursor-not-allowed"
+              >
+                Answer Later
+              </button>
+              <button
+                on:click={() => handleAction('Submit Answers')}
+                disabled={actionInProgress}
+                class="px-6 py-2 bg-yellow-600 hover:bg-yellow-500 text-white rounded-lg text-sm font-medium disabled:opacity-50 disabled:cursor-not-allowed inline-flex items-center gap-2"
+              >
+                {#if actionInProgress}<LoadingSpinner size="sm" /> Submitting...{:else}Submit & Start &rarr;{/if}
+              </button>
            </div>
         </div>
 
@@ -248,9 +457,27 @@
            {/if}
 
            <div class="pt-6 border-t border-zinc-800 flex justify-end gap-3">
-              <button class="px-4 py-2 bg-zinc-800 hover:bg-zinc-700 text-white rounded-lg text-sm border border-zinc-700">Escalate</button>
-              <button on:click={() => handleAction('Override')} class="px-4 py-2 bg-zinc-800 hover:bg-red-900/30 text-red-400 hover:text-red-300 rounded-lg text-sm border border-zinc-700 hover:border-red-800">Override & Accept</button>
-              <button on:click={() => handleAction('Auto-Retry')} class="px-6 py-2 bg-purple-600 hover:bg-purple-500 text-white rounded-lg text-sm font-medium">Auto-Retry with Feedback</button>
+              <button
+                on:click={() => handleAction('Escalate')}
+                disabled={actionInProgress}
+                class="px-4 py-2 bg-zinc-800 hover:bg-zinc-700 text-white rounded-lg text-sm border border-zinc-700 disabled:opacity-50 disabled:cursor-not-allowed"
+              >
+                Escalate
+              </button>
+              <button
+                on:click={() => handleAction('Override')}
+                disabled={actionInProgress}
+                class="px-4 py-2 bg-zinc-800 hover:bg-red-900/30 text-red-400 hover:text-red-300 rounded-lg text-sm border border-zinc-700 hover:border-red-800 disabled:opacity-50 disabled:cursor-not-allowed"
+              >
+                Override & Accept
+              </button>
+              <button
+                on:click={() => handleAction('Auto-Retry')}
+                disabled={actionInProgress}
+                class="px-6 py-2 bg-purple-600 hover:bg-purple-500 text-white rounded-lg text-sm font-medium disabled:opacity-50 disabled:cursor-not-allowed inline-flex items-center gap-2"
+              >
+                {#if actionInProgress}<LoadingSpinner size="sm" /> Retrying...{:else}Auto-Retry with Feedback{/if}
+              </button>
            </div>
         </div>
 
@@ -287,47 +514,49 @@
         </div>
 
         <div class="pt-4">
-           <textarea class="w-full bg-zinc-800 border border-zinc-700 rounded p-3 text-sm text-zinc-200 outline-none focus:border-amber-500 h-20" placeholder="Optional feedback..."></textarea>
+           <textarea
+             bind:value={reviewFeedback}
+             disabled={actionInProgress}
+             class="w-full bg-zinc-800 border border-zinc-700 rounded p-3 text-sm text-zinc-200 outline-none focus:border-amber-500 h-20 disabled:opacity-50"
+             placeholder="Optional feedback..."
+           ></textarea>
         </div>
 
         <div class="pt-4 flex justify-between items-center">
-           <button class="text-zinc-500 text-sm hover:text-zinc-300">Take over manually</button>
+           <button disabled={actionInProgress} class="text-zinc-500 text-sm hover:text-zinc-300 disabled:opacity-50">Take over manually</button>
            <div class="flex gap-3">
-              <button on:click={() => handleAction('Request Changes')} class="px-4 py-2 bg-zinc-800 hover:bg-zinc-700 text-white rounded-lg text-sm border border-zinc-700">Request Changes</button>
-              <button on:click={() => handleAction('Approve')} class="px-6 py-2 bg-emerald-600 hover:bg-emerald-500 text-white rounded-lg text-sm font-medium">Approve & Complete</button>
+              <button
+                on:click={() => handleAction('Request Changes')}
+                disabled={actionInProgress}
+                class="px-4 py-2 bg-zinc-800 hover:bg-zinc-700 text-white rounded-lg text-sm border border-zinc-700 disabled:opacity-50 disabled:cursor-not-allowed"
+              >
+                Request Changes
+              </button>
+              <button
+                on:click={() => handleAction('Approve')}
+                disabled={actionInProgress}
+                class="px-6 py-2 bg-emerald-600 hover:bg-emerald-500 text-white rounded-lg text-sm font-medium disabled:opacity-50 disabled:cursor-not-allowed inline-flex items-center gap-2"
+              >
+                {#if actionInProgress}<LoadingSpinner size="sm" /> Approving...{:else}Approve & Complete{/if}
+              </button>
            </div>
         </div>
 
-     <!-- 6. CONFLICT CARD -->
+     <!-- 6. CONFLICT CARD (Using modular component) -->
      {:else if decision.decisionType === 'conflict'}
-        <div class="space-y-6">
-           <div class="grid grid-cols-2 gap-0 border border-zinc-700 rounded-lg overflow-hidden">
-              <div class="bg-zinc-900/50 p-4 border-r border-zinc-700">
-                 <div class="text-xs text-zinc-500 uppercase font-bold mb-2">Your Version</div>
-                 <div class="text-xs text-zinc-600 mb-4">Modified {data.myVersion?.modified} by {data.myVersion?.by}</div>
-                 <div class="space-y-1">
-                    {#each (data.myVersion?.changes || []) as change}
-                       <div class="text-sm text-red-400">- {change}</div>
-                    {/each}
-                 </div>
-              </div>
-              <div class="bg-zinc-900/50 p-4">
-                 <div class="text-xs text-zinc-500 uppercase font-bold mb-2">Incoming Version</div>
-                 <div class="text-xs text-zinc-600 mb-4">Modified {data.incomingVersion?.modified} by {data.incomingVersion?.by}</div>
-                 <div class="space-y-1">
-                    {#each (data.incomingVersion?.changes || []) as change}
-                       <div class="text-sm text-green-400">+ {change}</div>
-                    {/each}
-                 </div>
-              </div>
-           </div>
+        <ConflictCard {decision} on:action={handleSubCardAction} on:defer={handleSubCardDefer} />
 
-           <div class="flex justify-center gap-4">
-              <button on:click={() => handleAction('Keep Mine')} class="px-6 py-3 bg-zinc-800 hover:bg-zinc-700 border border-zinc-600 rounded-lg text-zinc-200 text-sm font-medium">Keep Mine</button>
-              <button on:click={() => handleAction('Take Theirs')} class="px-6 py-3 bg-zinc-800 hover:bg-zinc-700 border border-zinc-600 rounded-lg text-zinc-200 text-sm font-medium">Take Theirs</button>
-              <button class="px-6 py-3 bg-transparent text-zinc-500 hover:text-zinc-300 text-sm">Merge Manually &rarr;</button>
-           </div>
-        </div>
+     <!-- 7. CHECKPOINT CARD (Unit 12) -->
+     {:else if decision.decisionType === 'checkpoint'}
+        <CheckpointCard {decision} on:action={handleSubCardAction} on:defer={handleSubCardDefer} />
+
+     <!-- 8. APPROVAL CARD (Unit 12) -->
+     {:else if decision.decisionType === 'approval'}
+        <ApprovalCard {decision} on:action={handleSubCardAction} on:defer={handleSubCardDefer} />
+
+     <!-- 10. CATEGORIZE CARD (Unit 12) -->
+     {:else if decision.decisionType === 'categorize'}
+        <CategorizeCard {decision} on:action={handleSubCardAction} on:defer={handleSubCardDefer} />
 
      <!-- 7. ESCALATE CARD -->
      {:else if decision.decisionType === 'escalate'}
@@ -347,9 +576,27 @@
             </div>
 
             <div class="border-t border-red-900/30 pt-4 flex gap-3">
-               <button on:click={() => handleAction('Retry New Instructions')} class="px-4 py-2 bg-red-900/30 hover:bg-red-900/50 text-red-200 border border-red-800 rounded text-sm">Retry with New Instructions</button>
-               <button on:click={() => handleAction('Edit Myself')} class="px-4 py-2 bg-red-600 hover:bg-red-500 text-white rounded text-sm font-medium">Edit Draft Myself</button>
-               <button on:click={() => handleAction('Abandon')} class="ml-auto px-4 py-2 text-red-500/70 hover:text-red-400 text-sm">Abandon Task</button>
+               <button
+                 on:click={() => handleAction('Retry New Instructions')}
+                 disabled={actionInProgress}
+                 class="px-4 py-2 bg-red-900/30 hover:bg-red-900/50 text-red-200 border border-red-800 rounded text-sm disabled:opacity-50 disabled:cursor-not-allowed"
+               >
+                 Retry with New Instructions
+               </button>
+               <button
+                 on:click={() => handleAction('Edit Myself')}
+                 disabled={actionInProgress}
+                 class="px-4 py-2 bg-red-600 hover:bg-red-500 text-white rounded text-sm font-medium disabled:opacity-50 disabled:cursor-not-allowed"
+               >
+                 Edit Draft Myself
+               </button>
+               <button
+                 on:click={() => handleAction('Abandon')}
+                 disabled={actionInProgress}
+                 class="ml-auto px-4 py-2 text-red-500/70 hover:text-red-400 text-sm disabled:opacity-50 disabled:cursor-not-allowed"
+               >
+                 Abandon Task
+               </button>
             </div>
          </div>
 
@@ -363,65 +610,85 @@
            <div class="grid grid-cols-2 gap-6">
               <div>
                  <label class="block text-xs text-zinc-500 mb-2">Project</label>
-                 <input type="text" value={data.suggestedProject} class="w-full bg-zinc-800 border border-zinc-700 rounded p-2 text-sm text-zinc-200 outline-none focus:border-amber-500" />
+                 <input
+                   type="text"
+                   bind:value={enrichProject}
+                   disabled={actionInProgress}
+                   class="w-full bg-zinc-800 border border-zinc-700 rounded p-2 text-sm text-zinc-200 outline-none focus:border-amber-500 disabled:opacity-50"
+                 />
               </div>
               <div>
                  <label class="block text-xs text-zinc-500 mb-2">Meeting Date</label>
-                 <input type="text" value={data.date} class="w-full bg-zinc-800 border border-zinc-700 rounded p-2 text-sm text-zinc-200 outline-none focus:border-amber-500" />
+                 <input
+                   type="text"
+                   bind:value={enrichDate}
+                   disabled={actionInProgress}
+                   class="w-full bg-zinc-800 border border-zinc-700 rounded p-2 text-sm text-zinc-200 outline-none focus:border-amber-500 disabled:opacity-50"
+                 />
               </div>
            </div>
 
            <div>
               <label class="block text-xs text-zinc-500 mb-2">Speakers</label>
               <div class="space-y-2">
-                 {#each (data.speakers || []) as speaker}
-                    <label class="flex items-center gap-2 p-2 bg-zinc-800/30 rounded cursor-pointer hover:bg-zinc-800">
-                       <input type="checkbox" checked={speaker.selected} class="rounded border-zinc-600 bg-zinc-700 text-amber-500" />
-                       <span class="text-sm text-zinc-300">{speaker.name}</span>
-                    </label>
+                 {#each enrichSpeakers as speaker, i}
+                    <div class="flex items-center gap-2 p-2 bg-zinc-800/30 rounded">
+                       <input
+                         type="checkbox"
+                         bind:checked={enrichSpeakers[i].selected}
+                         disabled={actionInProgress}
+                         class="rounded border-zinc-600 bg-zinc-700 text-amber-500 disabled:opacity-50"
+                       />
+                       <span class="text-sm text-zinc-300 flex-1">{speaker.name}</span>
+                       <button
+                         type="button"
+                         on:click={() => {
+                           enrichSpeakers = enrichSpeakers.filter((_, idx) => idx !== i);
+                         }}
+                         disabled={actionInProgress}
+                         class="text-zinc-500 hover:text-red-400 text-sm px-1 disabled:opacity-50 disabled:cursor-not-allowed"
+                         title="Remove speaker"
+                       >
+                         &times;
+                       </button>
+                    </div>
                  {/each}
-                 <input type="text" placeholder="+ Add speaker" class="w-full bg-transparent p-2 text-sm text-zinc-500 outline-none" />
+                 <SpeakerAutocomplete
+                   placeholder="+ Add speaker"
+                   disabled={actionInProgress}
+                   on:select={(e) => {
+                     const speaker = e.detail;
+                     // Don't add duplicates
+                     if (!enrichSpeakers.some(s => s.name.toLowerCase() === speaker.name.toLowerCase())) {
+                       enrichSpeakers = [...enrichSpeakers, {
+                         name: speaker.name,
+                         selected: true,
+                       }];
+                     }
+                   }}
+                 />
               </div>
            </div>
 
            <div class="pt-6 border-t border-zinc-800 flex justify-end gap-3">
-              <button class="px-4 py-2 text-zinc-400 hover:text-white text-sm">Skip</button>
-              <button on:click={() => handleAction('Save & Extract')} class="px-6 py-2 bg-amber-600 hover:bg-amber-500 text-white rounded-lg text-sm font-medium">Save & Extract Tasks &rarr;</button>
+              <button
+                on:click={() => dispatch('defer')}
+                disabled={actionInProgress || deferDisabled}
+                class="px-4 py-2 text-zinc-400 hover:text-white text-sm disabled:opacity-50 disabled:cursor-not-allowed"
+              >
+                Skip
+              </button>
+              <button
+                on:click={() => handleAction('Save & Extract')}
+                disabled={actionInProgress}
+                class="px-6 py-2 bg-amber-600 hover:bg-amber-500 text-white rounded-lg text-sm font-medium disabled:opacity-50 disabled:cursor-not-allowed inline-flex items-center gap-2"
+              >
+                {#if actionInProgress}<LoadingSpinner size="sm" /> Saving...{:else}Save & Extract Tasks &rarr;{/if}
+              </button>
            </div>
         </div>
      
-     <!-- 9. EXTRACT CARD -->
-     {:else if decision.decisionType === 'extract'}
-         <div class="space-y-6">
-            <div class="flex items-center justify-between text-sm text-zinc-400">
-               <span>Source: {data.sourceTitle}</span>
-               <span>{data.progress}</span>
-            </div>
-            
-            <div class="bg-zinc-800 p-6 rounded-lg border-l-4 border-green-500 shadow-lg">
-               <div class="flex justify-between items-start mb-4">
-                  <h3 class="text-xl font-semibold text-white">{decision.subject.title}</h3>
-                  <span class="px-2 py-1 bg-green-900/30 text-green-400 text-xs rounded border border-green-900/50">High Confidence</span>
-               </div>
-               
-               <div class="grid grid-cols-2 gap-4 text-sm mb-6">
-                  <div><span class="text-zinc-500">Owner:</span> {data.owner}</div>
-                  <div><span class="text-zinc-500">Due:</span> {data.due}</div>
-               </div>
-               
-               <div class="text-sm text-zinc-400 italic border-l-2 border-zinc-700 pl-4 py-1">
-                  "{data.quote}"
-               </div>
-            </div>
-            
-            <div class="pt-4 flex justify-center gap-4">
-               <button on:click={() => handleAction('Reject Extraction')} class="px-4 py-2 bg-zinc-800 hover:bg-zinc-700 text-zinc-300 rounded-lg text-sm border border-zinc-700">Reject</button>
-               <button class="px-4 py-2 bg-zinc-800 hover:bg-zinc-700 text-zinc-300 rounded-lg text-sm border border-zinc-700">Edit</button>
-               <button on:click={() => handleAction('Confirm Extraction')} class="px-8 py-2 bg-green-600 hover:bg-green-500 text-white rounded-lg text-sm font-medium">Confirm</button>
-            </div>
-         </div>
-
-     <!-- 10. MEETING TRIAGE CARD (Restored & Adapted) -->
+     <!-- 9. MEETING TRIAGE CARD (Restored & Adapted) -->
      {:else if decision.decisionType === 'meeting_triage'}
          <div class="space-y-6">
             <div class="flex items-center justify-between text-sm text-zinc-400">
@@ -469,13 +736,19 @@
             </div>
 
             <div class="pt-6 border-t border-zinc-800 flex justify-end gap-3">
-               <button on:click={() => dispatch('skip')} class="px-4 py-2 text-zinc-400 hover:text-white text-sm">Skip</button>
-               <button 
-                  on:click={() => handleAction('Confirm Meeting Tasks', { selectedTasks })}
-                  disabled={selectedTaskCount === 0}
-                  class="px-6 py-2 bg-emerald-600 hover:bg-emerald-500 disabled:opacity-50 disabled:cursor-not-allowed text-white rounded-lg text-sm font-medium"
+               <button
+                 on:click={() => dispatch('defer')}
+                 disabled={actionInProgress || deferDisabled}
+                 class="px-4 py-2 text-zinc-400 hover:text-white text-sm disabled:opacity-50 disabled:cursor-not-allowed"
                >
-                  Confirm Selection ({selectedTaskCount}) &rarr;
+                 Skip
+               </button>
+               <button
+                  on:click={() => handleAction('Confirm Meeting Tasks', { selectedTasks })}
+                  disabled={actionInProgress || selectedTaskCount === 0}
+                  class="px-6 py-2 bg-emerald-600 hover:bg-emerald-500 disabled:opacity-50 disabled:cursor-not-allowed text-white rounded-lg text-sm font-medium inline-flex items-center gap-2"
+               >
+                  {#if actionInProgress}<LoadingSpinner size="sm" /> Confirming...{:else}Confirm Selection ({selectedTaskCount}) &rarr;{/if}
                </button>
             </div>
          </div>

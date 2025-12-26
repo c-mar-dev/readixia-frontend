@@ -1,0 +1,15 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(git stash:*)",
+      "Bash(timeout 15 npm run dev)",
+      "Bash(npm test:*)",
+      "Bash(npx tsc:*)",
+      "Bash(npm run build:*)",
+      "Bash(npm run check:*)",
+      "Bash(findstr:*)",
+      "Bash(cat:*)",
+      "Bash(ls -la \"C:\\\\Users\\\\charl\\\\Desktop\\\\ClaudeCode\\\\readixia\\\\frontend\\\\tests\"\" 2>/dev/null || echo \"No tests directory found \")"
+    ]
+  }
+}

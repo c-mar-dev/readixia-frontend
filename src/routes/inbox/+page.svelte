@@ -1,24 +1,80 @@
 <!-- Inbox View - Email-style layout with wider list panel -->
 <script>
-  import { tick } from 'svelte';
+  import { onMount, onDestroy, tick } from 'svelte';
   import { goto } from '$app/navigation';
   import DecisionCard from '$lib/components/DecisionCard.svelte';
-  import { getNextDecision } from '$lib/utils/chaining.js';
+  import LoadingState from '$lib/components/LoadingState.svelte';
+  import ErrorState from '$lib/components/ErrorState.svelte';
+  import EmptyState from '$lib/components/EmptyState.svelte';
   import {
-    mockDecisions,
     decisionTypeConfig,
     thingTypeConfig,
-    allProjects
   } from '$lib/data/decisions.js';
 
-  // Local state
-  let decisions = [...mockDecisions];
+  // Import stores
+  import {
+    decisionStore,
+    decisions,
+    filterStore,
+    filteredDecisions,
+    pendingDecisions,
+    hasActiveFilters,
+    isLoading,
+    storeError,
+    hasMore,
+    isLoadingMore,
+    actionStore,
+  } from '$lib/stores';
 
-  // Filter state
+  function clearFilters() {
+    filterStore.clear();
+  }
+
+  // Local filter state (synced with store)
   let stageFilter = 'all';
   let thingFilter = 'all';
   let projectFilter = 'all';
-  
+
+  // Subscribe to filter store
+  const unsubscribeFilters = filterStore.subscribe(f => {
+    stageFilter = f.stage;
+    thingFilter = f.type;
+    projectFilter = f.project;
+  });
+
+  // Sync local changes to store
+  $: filterStore.setStage(stageFilter);
+  $: filterStore.setType(thingFilter);
+  $: filterStore.setProject(projectFilter);
+
+  // Track previous stage filter for reload detection
+  let prevStageFilter = 'all';
+
+  // Reload when stage filter changes to a valid decision type
+  $: {
+    const validDecisionTypes = Object.keys(decisionTypeConfig);
+    const isValidType = validDecisionTypes.includes(stageFilter);
+    const wasValidType = validDecisionTypes.includes(prevStageFilter);
+
+    if (stageFilter !== prevStageFilter && (isValidType || wasValidType || stageFilter === 'all')) {
+      decisionStore.load(isValidType ? { type: stageFilter } : undefined);
+    }
+    prevStageFilter = stageFilter;
+  }
+
+  // Initialize stores on mount
+  onMount(() => {
+    if (!decisionStore.initialized) {
+      decisionStore.load();
+    }
+    decisionStore.startPolling();
+  });
+
+  onDestroy(() => {
+    decisionStore.stopPolling();
+    unsubscribeFilters();
+  });
+
   // Navigation state
   let selectedIndex = 0;
   let queueListEl;
@@ -29,28 +85,17 @@
   let toasts = [];
   let lastAction = null;
 
-  // Reactive filtered decisions
-  $: pendingDecisions = decisions.filter(d => d.status === 'pending');
-
-  $: filteredDecisions = pendingDecisions.filter(d => {
-    if (stageFilter !== 'all' && stageFilter !== 'urgent' && d.decisionType !== stageFilter) return false;
-    if (stageFilter === 'urgent' && d.priority !== 'urgent') return false;
-    if (thingFilter !== 'all' && d.subject.type !== thingFilter) return false;
-    if (projectFilter !== 'all' && d.project !== projectFilter) return false;
-    return true;
-  });
-
-  // Reactive selection
-  $: selectedDecision = filteredDecisions.length > 0
-    ? filteredDecisions[Math.min(selectedIndex, filteredDecisions.length - 1)]
+  // Reactive selection (from store)
+  $: selectedDecision = $filteredDecisions.length > 0
+    ? $filteredDecisions[Math.min(selectedIndex, $filteredDecisions.length - 1)]
     : null;
 
-  $: if (filteredDecisions) {
-    selectedIndex = Math.min(selectedIndex, Math.max(0, filteredDecisions.length - 1));
+  $: if ($filteredDecisions) {
+    selectedIndex = Math.min(selectedIndex, Math.max(0, $filteredDecisions.length - 1));
   }
 
   function selectDecision(decision) {
-    const idx = filteredDecisions.findIndex(d => d.id === decision.id);
+    const idx = $filteredDecisions.findIndex(d => d.id === decision.id);
     if (idx !== -1) selectedIndex = idx;
   }
 
@@ -60,31 +105,37 @@
     setTimeout(() => { toasts = toasts.filter(t => t.id !== id); }, 3000);
   }
 
-  function markAsCompleted(decisionId) {
-    const idx = decisions.findIndex(d => d.id === decisionId);
-    if (idx !== -1) {
-      decisions[idx] = { ...decisions[idx], status: 'completed' };
-      decisions = [...decisions]; // Trigger reactivity
-    }
-  }
-
-  function handleCardAction(event) {
-    const { name, decision } = event.detail;
+  async function handleCardAction(event) {
+    const { name, decision, payload } = event.detail;
     showToast(`${name}: ${decision.subject.title}`, 'success');
     lastAction = { type: 'action', name, decision, previousIndex: selectedIndex, timestamp: Date.now() };
-    
-    markAsCompleted(decision.id);
 
-    const nextDecision = getNextDecision(decision, name);
-    if (nextDecision) {
-       const idx = decisions.findIndex(d => d.id === decision.id);
-       if (idx !== -1) {
-          decisions.splice(idx + 1, 0, nextDecision);
-          decisions = decisions; 
-          // selectedIndex stays the same, pointing to the new item that took the slot
-       }
-    } else {
-       moveToNextDecision();
+    try {
+      // Use decisionStore.resolve() which returns action metadata
+      const response = await decisionStore.resolve(decision.id, { action: name, ...payload });
+
+      // Add to action store for undo functionality
+      if (response?.actionId && response?.undoExpiresAt) {
+        actionStore.add({
+          id: response.actionId,
+          decisionId: decision.id,
+          decisionTitle: decision.subject.title,
+          actionName: name,
+          expiresAt: response.undoExpiresAt,
+          timestamp: new Date(),
+        });
+      }
+
+      // Auto-select first chained decision if any, otherwise move to next
+      if (response.chainedDecisions && response.chainedDecisions.length > 0) {
+        await tick(); // Wait for store to update DOM
+        selectDecision(response.chainedDecisions[0]);
+      } else {
+        moveToNextDecision();
+      }
+    } catch (error) {
+      showToast(`Error: ${error.message}`, 'error');
+      console.error('Failed to resolve decision:', error);
     }
   }
 
@@ -96,8 +147,8 @@
   }
 
   function moveToNextDecision() {
-    if (selectedIndex >= filteredDecisions.length - 1) {
-      selectedIndex = Math.max(0, filteredDecisions.length - 2);
+    if (selectedIndex >= $filteredDecisions.length - 1) {
+      selectedIndex = Math.max(0, $filteredDecisions.length - 2);
     }
   }
 
@@ -115,7 +166,7 @@
         break;
       case 'ArrowDown': case 'j':
         event.preventDefault();
-        if (selectedIndex < filteredDecisions.length - 1) selectedIndex++;
+        if (selectedIndex < $filteredDecisions.length - 1) selectedIndex++;
         break;
       case 's':
         event.preventDefault();
@@ -167,24 +218,41 @@
             </button>
           {/each}
         </div>
-        <div class="text-amber-400 font-bold text-lg tabular-nums">{filteredDecisions.length}</div>
+        <div class="text-amber-400 font-bold text-lg tabular-nums">{$filteredDecisions.length}</div>
       </div>
     </div>
   </div>
 
   <!-- Two-panel layout -->
   <div class="flex h-[calc(100vh-57px)]">
-    <!-- Left Panel - Email-style list (40% width) -->
-    <div class="w-2/5 border-r border-zinc-800 flex flex-col bg-zinc-900/50" bind:this={queueListEl}>
-      <div class="flex-1 overflow-y-auto">
-        {#if filteredDecisions.length === 0}
-          <div class="p-8 text-center text-zinc-500">
-            <div class="text-4xl mb-3 opacity-20">📭</div>
-            <div>Inbox Zero</div>
-            <div class="text-xs mt-1">No decisions match your filters</div>
-          </div>
-        {:else}
-          {#each filteredDecisions as decision, index}
+    <!-- Loading State -->
+    {#if $isLoading && $decisions.length === 0}
+      <LoadingState count={5} showDetail={true} />
+
+    <!-- Error State -->
+    {:else if $storeError}
+      <div class="flex-1 flex items-center justify-center">
+        <ErrorState error={$storeError} onRetry={() => decisionStore.refresh()} />
+      </div>
+
+    <!-- Empty State: All caught up -->
+    {:else if $pendingDecisions.length === 0}
+      <div class="flex-1 flex items-center justify-center">
+        <EmptyState variant="empty" />
+      </div>
+
+    <!-- Empty State: No filter matches -->
+    {:else if $filteredDecisions.length === 0 && $hasActiveFilters}
+      <div class="flex-1 flex items-center justify-center">
+        <EmptyState variant="filtered" onClearFilters={clearFilters} />
+      </div>
+
+    <!-- Normal State: Show list and detail panel -->
+    {:else}
+      <!-- Left Panel - Email-style list (40% width) -->
+      <div class="w-2/5 border-r border-zinc-800 flex flex-col bg-zinc-900/50" bind:this={queueListEl}>
+        <div class="flex-1 overflow-y-auto">
+          {#each $filteredDecisions as decision, index (decision.id)}
             {@const config = decisionTypeConfig[decision.decisionType]}
             {@const thingConfig = thingTypeConfig[decision.subject.type]}
             <button
@@ -203,9 +271,9 @@
                     <span class="font-medium text-zinc-200 truncate">{decision.subject.title}</span>
                     <span class="text-xs text-zinc-500 ml-auto flex-shrink-0">{decision.created}</span>
                   </div>
-                  
+
                   <div class="text-sm text-zinc-400 truncate mb-2">{decision.question}</div>
-                  
+
                   <div class="flex items-center gap-2">
                     <span class="text-[10px] px-1.5 py-0.5 rounded bg-zinc-800 border border-zinc-700 text-zinc-400 flex items-center gap-1">
                       {config.icon} {config.label}
@@ -221,34 +289,51 @@
               </div>
             </button>
           {/each}
+
+          <!-- Load More Button -->
+          {#if $hasMore}
+            <div class="p-4 border-b border-zinc-800">
+              <button
+                on:click={() => decisionStore.loadMore()}
+                disabled={$isLoadingMore}
+                class="w-full py-2 px-4 bg-zinc-800 hover:bg-zinc-700 disabled:opacity-50 disabled:cursor-not-allowed text-zinc-300 text-sm rounded-lg transition-colors"
+              >
+                {#if $isLoadingMore}
+                  Loading...
+                {:else}
+                  Load More
+                {/if}
+              </button>
+            </div>
+          {/if}
+        </div>
+
+        <!-- Footer hints -->
+        <div class="px-4 py-2 border-t border-zinc-800 bg-zinc-900 text-[10px] text-zinc-500 flex items-center gap-4">
+          <span><kbd class="bg-zinc-800 px-1 rounded text-zinc-400">j/k</kbd> navigate</span>
+          <span><kbd class="bg-zinc-800 px-1 rounded text-zinc-400">s</kbd> skip</span>
+          <span><kbd class="bg-zinc-800 px-1 rounded text-zinc-400">Esc</kbd> back</span>
+        </div>
+      </div>
+
+      <!-- Right Panel - Expanded detail view -->
+      <div class="flex-1 bg-zinc-900 overflow-y-auto" bind:this={detailPanelEl}>
+        {#if selectedDecision}
+           <DecisionCard
+              decision={selectedDecision}
+              on:action={handleCardAction}
+              on:skip={handleSkip}
+           />
+        {:else}
+          <div class="flex items-center justify-center h-full text-zinc-500">
+            <div class="text-center">
+               <div class="text-4xl mb-4 opacity-20">⚡</div>
+               <p>Select an item to view details</p>
+            </div>
+          </div>
         {/if}
       </div>
-
-      <!-- Footer hints -->
-      <div class="px-4 py-2 border-t border-zinc-800 bg-zinc-900 text-[10px] text-zinc-500 flex items-center gap-4">
-        <span><kbd class="bg-zinc-800 px-1 rounded text-zinc-400">j/k</kbd> navigate</span>
-        <span><kbd class="bg-zinc-800 px-1 rounded text-zinc-400">s</kbd> skip</span>
-        <span><kbd class="bg-zinc-800 px-1 rounded text-zinc-400">Esc</kbd> back</span>
-      </div>
-    </div>
-
-    <!-- Right Panel - Expanded detail view -->
-    <div class="flex-1 bg-zinc-900 overflow-y-auto" bind:this={detailPanelEl}>
-      {#if selectedDecision}
-         <DecisionCard 
-            decision={selectedDecision} 
-            on:action={handleCardAction} 
-            on:skip={handleSkip} 
-         />
-      {:else}
-        <div class="flex items-center justify-center h-full text-zinc-500">
-          <div class="text-center">
-             <div class="text-4xl mb-4 opacity-20">⚡</div>
-             <p>Select an item to view details</p>
-          </div>
-        </div>
-      {/if}
-    </div>
+    {/if}
   </div>
 </div>
 

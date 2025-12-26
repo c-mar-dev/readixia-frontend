@@ -23,7 +23,7 @@ export const mockDecisions = [
   // --- 2. Specification Card ---
   {
     id: 'd_spec1',
-    decisionType: 'specify',
+    decisionType: 'specification',
     status: 'pending',
     subject: { type: 'task', id: 't_spec1', title: 'Write Q1 report', source: 'todoist' },
     project: 'Q1 Planning',
@@ -52,7 +52,7 @@ export const mockDecisions = [
   // --- 3. Clarification Card ---
   {
     id: 'd_clarify1',
-    decisionType: 'clarifying',
+    decisionType: 'clarification',
     status: 'pending',
     subject: { type: 'task', id: 't_clarify1', title: 'Write Q1 report', source: 'manual' },
     project: 'Legal Compliance',
@@ -69,7 +69,7 @@ export const mockDecisions = [
   // --- 4. Verification Card ---
   {
     id: 'd_verify1',
-    decisionType: 'verifying',
+    decisionType: 'verification',
     status: 'pending',
     subject: { type: 'task', id: 't_verify1', title: 'Write Q1 report', source: 'todoist' },
     project: 'Marketing Site',
@@ -125,17 +125,25 @@ export const mockDecisions = [
     question: 'Conflict detected',
     created: 'Just now',
     data: {
+      filePath: 'tasks/write-q1-report.md',
+      conflictType: 'concurrent',
       myVersion: {
         seq: 47,
+        timestamp: '2 min ago',
+        actor: 'You (Obsidian)',
+        changes: ['priority: p2', '_state: specifying'],
+        // Deprecated fields for backwards compat
         modified: '2 min ago',
-        by: 'You (Obsidian)',
-        changes: ['priority: p2', '_state: specifying']
+        by: 'You (Obsidian)'
       },
       incomingVersion: {
         seq: 47,
+        timestamp: '1 min ago',
+        actor: 'Claude (worker)',
+        changes: ['priority: p1', '_state: specified'],
+        // Deprecated fields for backwards compat
         modified: '1 min ago',
-        by: 'Claude (worker)',
-        changes: ['priority: p1', '_state: specified']
+        by: 'Claude (worker)'
       }
     }
   },
@@ -143,7 +151,7 @@ export const mockDecisions = [
   // --- 7. Escalation Card ---
   {
     id: 'd_escalate1',
-    decisionType: 'escalate',
+    decisionType: 'escalation',
     status: 'pending',
     subject: { type: 'task', id: 't_escalate1', title: 'Write Q1 report', source: 'manual' },
     priority: 'urgent',
@@ -165,7 +173,7 @@ export const mockDecisions = [
   // --- 8. Enrichment Card ---
   {
     id: 'd_enrich1',
-    decisionType: 'enrich',
+    decisionType: 'enrichment',
     status: 'pending',
     subject: { type: 'transcript', id: 't_enrich1', title: 'team-meeting-2024-12-15.md', source: 'upload' },
     project: null,
@@ -185,28 +193,6 @@ export const mockDecisions = [
     }
   },
 
-    // --- 9. Extraction Confirmation Card ---
-    {
-      id: 'd_extract1',
-      decisionType: 'extract',
-      status: 'pending',
-      subject: { type: 'task', id: 't_extract1', title: 'Create Q1 roadmap draft', source: 'transcript' },
-      project: 'Q1 Planning',
-      priority: 'high',
-      question: 'Confirm extracted task',
-      created: '10m ago',
-      data: {
-        sourceTitle: 'Q4 Planning Meeting',
-        progress: '1 of 4',
-        owner: 'me',
-        due: 'Dec 15',
-        quote: '...agreed to have draft ready for exec review by the 15th...',
-        confidence: 'high', // high, medium, low
-        suggestedProject: 'Q1 Planning',
-        suggestedPriority: 'p2'
-      }
-    },
-  
     // --- ADDITIONAL EXAMPLES ---
   
     // 10. Triage (Email Source)
@@ -227,10 +213,10 @@ export const mockDecisions = [
       }
     },
   
-    // 11. Specify (Technical Task)
+    // 11. Specification (Technical Task)
     {
       id: 'd_spec2',
-      decisionType: 'specify',
+      decisionType: 'specification',
       status: 'pending',
       subject: { type: 'task', id: 't_spec2', title: 'Optimize database queries', source: 'manual' },
       project: 'Backend API',
@@ -281,7 +267,7 @@ export const mockDecisions = [
     
           id: 'd_mt1',
     
-          decisionType: 'meeting_triage',
+          decisionType: 'meeting_tasks',
     
           status: 'pending',
     
@@ -373,7 +359,7 @@ export const mockDecisions = [
     
           id: 'd_clarify2',
     
-          decisionType: 'clarifying',
+          decisionType: 'clarification',
     
           status: 'pending',
     
@@ -390,18 +376,83 @@ export const mockDecisions = [
           clarificationQuestions: [
     
             { id: 'q1', type: 'text', text: 'Who is the target audience for this presentation?' },
-    
+
             { id: 'q2', type: 'choice', text: 'How many slides roughly?', options: ['5-10', '10-20', '20+'] }
-    
+
           ]
-    
-        }
-    
+
+        },
+
+    // --- 16. Checkpoint Card ---
+    {
+      id: 'd_checkpoint1',
+      decisionType: 'checkpoint',
+      status: 'pending',
+      subject: { type: 'task', id: 't_checkpoint1', title: 'Optimize database queries', source: 'manual' },
+      project: 'Backend API',
+      priority: 'high',
+      question: 'Agent needs clarification to continue',
+      created: 'Just now',
+      clarificationQuestions: [
+        { id: 'cp1', type: 'choice', text: 'Should I prioritize read performance or write performance?', options: ['Read performance', 'Write performance', 'Balanced'] },
+        { id: 'cp2', type: 'text', text: 'Are there any specific tables I should avoid modifying?' }
+      ],
+      data: {
+        taskContext: 'Optimizing /users endpoint queries',
+        agentName: 'Claude Executor',
+        expiresAt: new Date(Date.now() + 5 * 60 * 1000).toISOString(),
+        progress: 'Step 2 of 5'
+      }
+    },
+
+    // --- 17. Approval Card ---
+    {
+      id: 'd_approval1',
+      decisionType: 'approval',
+      status: 'pending',
+      subject: { type: 'task', id: 't_approval1', title: 'Deploy to production', source: 'ci' },
+      project: 'Backend API',
+      priority: 'urgent',
+      question: 'Approve production deployment?',
+      created: '5m ago',
+      data: {
+        action: 'Deploy version 2.4.1 to production',
+        context: 'All tests passed. This release includes 3 bug fixes and 1 new feature (user avatars).',
+        implications: 'This will affect all active users. Rollback is available within 30 minutes.',
+        requestedBy: 'CI Pipeline',
+        requestedAt: '5 minutes ago'
+      }
+    },
+
+    // --- 19. Categorize Card ---
+    {
+      id: 'd_categorize1',
+      decisionType: 'categorize',
+      status: 'pending',
+      subject: { type: 'email', id: 'e_cat1', title: 'Re: Q1 Budget Review', source: 'email' },
+      project: null,
+      priority: 'normal',
+      question: 'Categorize this item',
+      created: '30m ago',
+      data: {
+        preview: 'Hi Team, Please review the attached Q1 budget spreadsheet and let me know if you have any questions...',
+        suggestedCategory: 'Reference',
+        categories: ['Task Source', 'Reference', 'Archive', 'Spam'],
+        suggestedProject: 'Finance',
+        projects: ['Finance', 'Q1 Planning', 'Marketing', 'Backend API'],
+        showTypeSelector: false,
+        additionalFields: [
+          { name: 'From', value: 'finance@company.com', editable: false },
+          { name: 'Tags', value: 'budget, review', editable: true }
+        ]
+      }
+    }
+
       ];// Decision type configuration with colors and styling
 export const decisionTypeConfig = {
-  enrich: {
+  enrichment: {
     icon: '🎙️',
-    label: 'Enrich',
+    label: 'Enrichment',
     color: 'amber',
     bgClass: 'bg-amber-900/20',
     borderClass: 'border-l-amber-500',
@@ -413,11 +464,12 @@ export const decisionTypeConfig = {
     color: 'purple',
     bgClass: 'bg-purple-900/20',
     borderClass: 'border-l-purple-500',
-    hoverBgClass: 'hover:bg-purple-900/30'
+    hoverBgClass: 'hover:bg-purple-900/30',
+    deprecated: true // Use 'categorize' or 'meeting_tasks' instead
   },
-  specify: {
+  specification: {
     icon: '✏️',
-    label: 'Specify',
+    label: 'Specification',
     color: 'orange',
     bgClass: 'bg-orange-900/20',
     borderClass: 'border-l-orange-500',
@@ -439,7 +491,7 @@ export const decisionTypeConfig = {
     borderClass: 'border-l-pink-500',
     hoverBgClass: 'hover:bg-pink-900/30'
   },
-  meeting_triage: {
+  meeting_tasks: {
     icon: '📋🎙️',
     label: 'Meeting Tasks',
     color: 'emerald',
@@ -447,17 +499,17 @@ export const decisionTypeConfig = {
     borderClass: 'border-l-emerald-500',
     hoverBgClass: 'hover:bg-emerald-900/30'
   },
-  clarifying: {
+  clarification: {
     icon: '🤔',
-    label: 'Clarify',
+    label: 'Clarification',
     color: 'yellow',
     bgClass: 'bg-yellow-900/20 border-yellow-500 shadow-[0_0_15px_rgba(234,179,8,0.2)]', // Glow effect
     borderClass: 'border-l-yellow-500',
     hoverBgClass: 'hover:bg-yellow-900/30'
   },
-  verifying: {
+  verification: {
     icon: '🛡️',
-    label: 'Verifying',
+    label: 'Verification',
     color: 'purple',
     bgClass: 'bg-purple-900/20',
     borderClass: 'border-l-purple-500',
@@ -471,31 +523,110 @@ export const decisionTypeConfig = {
     borderClass: 'border-l-red-500',
     hoverBgClass: 'hover:bg-red-900/30'
   },
-  escalate: {
+  escalation: {
     icon: '🚨',
-    label: 'Escalate',
+    label: 'Escalation',
     color: 'red',
     bgClass: 'bg-red-900/30 border-red-500 shadow-[0_0_15px_rgba(239,68,68,0.2)]',
     borderClass: 'border-l-red-500',
     hoverBgClass: 'hover:bg-red-900/40'
   },
-  extract: {
-    icon: '⛏️',
-    label: 'Extract',
-    color: 'green',
-    bgClass: 'bg-green-900/20',
-    borderClass: 'border-l-green-500',
-    hoverBgClass: 'hover:bg-green-900/30'
+  checkpoint: {
+    icon: '⏸️',
+    label: 'Checkpoint',
+    color: 'yellow',
+    bgClass: 'bg-yellow-900/20 border-yellow-500 shadow-[0_0_15px_rgba(234,179,8,0.2)]',
+    borderClass: 'border-l-yellow-500',
+    hoverBgClass: 'hover:bg-yellow-900/30'
   },
-  meeting_triage: {
-    icon: '🎙️',
-    label: 'Meeting Tasks',
+  approval: {
+    icon: '✅',
+    label: 'Approval',
     color: 'emerald',
     bgClass: 'bg-emerald-900/20',
     borderClass: 'border-l-emerald-500',
     hoverBgClass: 'hover:bg-emerald-900/30'
+  },
+  delegation: {
+    icon: '👥',
+    label: 'Delegation',
+    color: 'blue',
+    bgClass: 'bg-blue-900/20',
+    borderClass: 'border-l-blue-500',
+    hoverBgClass: 'hover:bg-blue-900/30'
   }
 };
+
+// Decision type groups for workflow phases
+export const decisionTypeGroups = {
+  intake: {
+    label: 'Intake',
+    icon: '📥',
+    description: 'New items entering the system',
+    types: ['categorize', 'meeting_tasks'],
+    order: 1
+  },
+  refinement: {
+    label: 'Refinement',
+    icon: '🔧',
+    description: 'Defining and clarifying work',
+    types: ['specification', 'clarification', 'enrichment'],
+    order: 2
+  },
+  execution: {
+    label: 'Execution',
+    icon: '⚡',
+    description: 'Work in progress',
+    types: ['checkpoint'],
+    order: 3
+  },
+  verification: {
+    label: 'Verification',
+    icon: '✓',
+    description: 'Reviewing completed work',
+    types: ['verification', 'review'],
+    order: 4
+  },
+  exceptions: {
+    label: 'Exceptions',
+    icon: '⚠️',
+    description: 'Issues requiring attention',
+    types: ['escalation', 'conflict', 'approval', 'delegation'],
+    order: 5
+  }
+};
+
+/**
+ * Get the group key for a decision type.
+ * @param {string} type - The decision type
+ * @returns {string|null} - The group key or null if not found
+ */
+export function getDecisionTypeGroup(type) {
+  for (const [groupKey, group] of Object.entries(decisionTypeGroups)) {
+    if (group.types.includes(type)) {
+      return groupKey;
+    }
+  }
+  return null;
+}
+
+/**
+ * Get all decision types in a group.
+ * @param {string} groupKey - The group key (e.g., 'intake', 'refinement')
+ * @returns {string[]} - Array of decision types in the group
+ */
+export function getTypesInGroup(groupKey) {
+  const group = decisionTypeGroups[groupKey];
+  return group ? group.types : [];
+}
+
+/**
+ * Get sorted group entries for UI rendering.
+ * @returns {Array<[string, object]>} - Sorted array of [groupKey, groupConfig] entries
+ */
+export function getSortedGroups() {
+  return Object.entries(decisionTypeGroups).sort((a, b) => a[1].order - b[1].order);
+}
 
 // Thing type configuration
 export const thingTypeConfig = {
