@@ -62,6 +62,13 @@ export { tasksApi } from './tasks';
 export type { CreateTaskRequest, CreateTaskResponse } from './tasks';
 
 // =============================================================================
+// Projects API
+// =============================================================================
+
+export { projectsApi } from './projects';
+export type { Project, ProjectListResponse, ProjectListParams } from './projects';
+
+// =============================================================================
 // Speakers API
 // =============================================================================
 

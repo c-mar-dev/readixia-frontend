@@ -44,6 +44,28 @@ The UI supports five decision workflow stages:
 - `review`: Approve/revise/reject AI work
 - `categorize`: Classify emails (task source, reference, ignore)
 
+## Svelte Reactive Patterns
+
+**Critical**: Reactive statements (`$:`) execute AFTER `let` declarations during component initialization. You cannot access reactive values during `let` initialization.
+
+```svelte
+// WRONG - causes TypeError: Cannot read properties of undefined
+$: data = decision.data || {};
+let selectedCategory = data.suggestedCategory || '';  // data is undefined here!
+
+// CORRECT - initialize empty, populate reactively
+$: data = decision.data || {};
+let selectedCategory = '';
+
+$: if (decision && decision.data) {
+  if (selectedCategory === '' && decision.data.suggestedCategory) {
+    selectedCategory = decision.data.suggestedCategory;
+  }
+}
+```
+
+This pattern applies to all card components that receive a `decision` prop and need to initialize form state from `decision.data`.
+
 ## Styling Convention
 
 Uses Tailwind's zinc color palette for dark mode UI with amber as the accent color.

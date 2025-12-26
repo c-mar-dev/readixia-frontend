@@ -1,6 +1,8 @@
 <script>
-  import { createEventDispatcher } from 'svelte';
+  import { createEventDispatcher, onMount } from 'svelte';
   import LoadingSpinner from '../LoadingSpinner.svelte';
+  import FuzzyDropdown from '../FuzzyDropdown.svelte';
+  import { projectsApi } from '$lib/api';
 
   /** @type {import('$lib/api/types').UiDecision} */
   export let decision;
@@ -16,6 +18,28 @@
   let selectedType = '';
   let additionalFieldValues = {};
   let showAdditionalFields = false;
+
+  // Projects from API
+  let fetchedProjects = [];
+  let projectsLoading = false;
+  let projectsError = null;
+
+  // Merge fetched projects with decision data projects (deduplicated)
+  $: allProjects = [...new Set([...(data.projects || []), ...fetchedProjects])].sort();
+
+  // Fetch projects on mount
+  onMount(async () => {
+    try {
+      projectsLoading = true;
+      const response = await projectsApi.list({ state: 'active' });
+      fetchedProjects = response.projects.map(p => p.title);
+    } catch (e) {
+      console.error('Failed to fetch projects:', e);
+      projectsError = e.message;
+    } finally {
+      projectsLoading = false;
+    }
+  });
 
   // Initialize form values reactively when decision/data changes
   $: if (decision && decision.data) {
@@ -170,19 +194,23 @@
     <label for="project-select" class="block text-xs font-bold text-zinc-500 uppercase tracking-wider">
       Project <span class="text-zinc-600">(Optional)</span>
     </label>
-    <select
-      id="project-select"
-      bind:value={selectedProject}
-      disabled={actionInProgress}
-      class="select-dropdown w-full bg-zinc-900 border border-zinc-700 rounded-lg px-4 py-2.5 text-zinc-200 text-sm focus:border-pink-500 focus:ring-1 focus:ring-pink-500 outline-none disabled:opacity-50 disabled:cursor-not-allowed appearance-none cursor-pointer pr-10"
-    >
-      <option value="">No project</option>
-      {#each (data.projects || []) as project}
-        <option value={project} class:text-pink-400={project === data.suggestedProject}>
-          {project}{project === data.suggestedProject ? ' (suggested)' : ''}
-        </option>
-      {/each}
-    </select>
+    {#if projectsLoading}
+      <div class="px-4 py-2.5 bg-zinc-900 border border-zinc-700 rounded-lg text-zinc-500 text-sm flex items-center gap-2">
+        <LoadingSpinner size="sm" />
+        Loading projects...
+      </div>
+    {:else}
+      <FuzzyDropdown
+        options={allProjects}
+        bind:value={selectedProject}
+        placeholder="Search or select project..."
+        disabled={actionInProgress}
+        suggestedValue={data.suggestedProject}
+        allowEmpty={true}
+        emptyLabel="No project"
+        on:change={(e) => selectedProject = e.detail.value}
+      />
+    {/if}
   </div>
 
   <!-- Item Type Selection (conditional) -->
