@@ -36,6 +36,7 @@
     actionStore,
     uiStore,
   } from '$lib/stores';
+  import { tasksApi } from '$lib/api';
   import { getErrorMessage } from '$lib/utils/errorMessages';
 
   // Modal states
@@ -318,29 +319,27 @@
     scrollToSelected();
   }
 
-  function handleTaskCreate(event) {
-    const { title, project, priority } = event.detail;
-    const newDecision = {
-      id: `d_new_${Date.now()}`,
-      decisionType: 'triage',
-      status: 'pending',
-      subject: { type: 'task', id: `task_${Date.now()}`, title: title, source: 'manual' },
-      project: project || null,
-      priority: priority,
-      question: 'Route this item',
-      created: 'just now',
-      data: {
-        destination: ['Quick Win', 'Project Task', 'Reference'],
-        suggestedDestination: 'Project Task',
-        suggestedProject: project || 'Inbox',
-        suggestedPriority: priority || 'normal'
-      },
-      _isNew: true
-    };
-    decisionStore.addDecision(newDecision);
-    showTaskCreationModal = false;
-    uiStore.success(`Task created: ${title}`);
-    tick().then(() => { selectDecision(newDecision); scrollToSelected(); });
+  async function handleTaskCreate(event) {
+    const { title, project, priority, description } = event.detail;
+
+    try {
+      // Call Engine API to create task in MDQ
+      const result = await tasksApi.create({
+        title,
+        project: project || undefined,
+        priority: priority || 'normal',
+        description: description || undefined,
+      });
+
+      showTaskCreationModal = false;
+      uiStore.success(result.message);
+
+      // Task will appear via event-driven flow:
+      // MDQ creates file -> Engine receives event -> Creates triage decision ->
+      // Dashboard receives via WebSocket/polling
+    } catch (error) {
+      uiStore.error(`Failed to create task: ${error.message || 'Unknown error'}`);
+    }
   }
 
   // --- Keyboard Shortcuts ---
