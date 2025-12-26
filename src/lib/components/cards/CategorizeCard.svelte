@@ -10,20 +10,31 @@
   // Extract data
   $: data = decision.data || {};
 
-  // Form state
-  let selectedCategory = data.suggestedCategory || '';
-  let selectedProject = data.suggestedProject || '';
+  // Form state - initialized empty, set reactively when data is ready
+  let selectedCategory = '';
+  let selectedProject = '';
   let selectedType = '';
   let additionalFieldValues = {};
   let showAdditionalFields = false;
 
-  // Initialize additional field values
-  $: if (data.additionalFields) {
-    data.additionalFields.forEach(field => {
-      if (!(field.name in additionalFieldValues)) {
-        additionalFieldValues[field.name] = field.value || '';
-      }
-    });
+  // Initialize form values reactively when decision/data changes
+  $: if (decision && decision.data) {
+    const d = decision.data;
+    // Initialize category/project if not yet set (only on first load)
+    if (selectedCategory === '' && d.suggestedCategory) {
+      selectedCategory = d.suggestedCategory;
+    }
+    if (selectedProject === '' && d.suggestedProject) {
+      selectedProject = d.suggestedProject;
+    }
+    // Handle additional fields
+    if (d.additionalFields) {
+      d.additionalFields.forEach(field => {
+        if (!(field.name in additionalFieldValues)) {
+          additionalFieldValues[field.name] = field.value || '';
+        }
+      });
+    }
   }
 
   // Action state
@@ -33,7 +44,7 @@
   $: isValid = selectedCategory.trim() !== '';
 
   // Check if AI suggestion is selected
-  $: isAISuggestion = selectedCategory === data.suggestedCategory && selectedProject === data.suggestedProject;
+  $: isAISuggestion = data && selectedCategory === data.suggestedCategory && selectedProject === data.suggestedProject;
 
   function selectAISuggestion() {
     if (data.suggestedCategory) {
