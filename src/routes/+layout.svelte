@@ -15,40 +15,50 @@
   let previousWasOffline = false;
 
   onMount(() => {
-    // Initialize offline detection
-    uiStore.setOffline(!navigator.onLine);
+    console.log('[Layout] onMount starting');
 
-    const handleOnline = () => {
-      uiStore.setOffline(false);
-      // Show "back online" toast if we were offline
-      if (previousWasOffline) {
-        uiStore.success('Connection restored', 'Back Online');
-        uiStore.clearWasOffline();
-      }
-    };
+    try {
+      // Initialize offline detection
+      uiStore.setOffline(!navigator.onLine);
+      console.log('[Layout] Offline detection initialized');
 
-    const handleOffline = () => {
-      uiStore.setOffline(true);
-      previousWasOffline = true;
-      uiStore.warning('No internet connection', 'Offline');
-    };
+      const handleOnline = () => {
+        uiStore.setOffline(false);
+        // Show "back online" toast if we were offline
+        if (previousWasOffline) {
+          uiStore.success('Connection restored', 'Back Online');
+          uiStore.clearWasOffline();
+        }
+      };
 
-    window.addEventListener('online', handleOnline);
-    window.addEventListener('offline', handleOffline);
+      const handleOffline = () => {
+        uiStore.setOffline(true);
+        previousWasOffline = true;
+        uiStore.warning('No internet connection', 'Offline');
+      };
 
-    // Wire up event handlers
-    realtimeService.onDecisionEvent = handleDecisionWebSocketEvent;
-    realtimeService.onAgentEvent = handleAgentWebSocketEvent;
-    realtimeService.onPollNeeded = () => decisionStore.refresh();
-    realtimeService.onResyncNeeded = () => decisionStore.refresh();
+      window.addEventListener('online', handleOnline);
+      window.addEventListener('offline', handleOffline);
+      console.log('[Layout] Event listeners added');
 
-    // Initialize WebSocket connections
-    realtimeService.initialize();
+      // Wire up event handlers
+      realtimeService.onDecisionEvent = handleDecisionWebSocketEvent;
+      realtimeService.onAgentEvent = handleAgentWebSocketEvent;
+      realtimeService.onPollNeeded = () => decisionStore.refresh();
+      realtimeService.onResyncNeeded = () => decisionStore.refresh();
+      console.log('[Layout] Realtime handlers wired');
 
-    return () => {
-      window.removeEventListener('online', handleOnline);
-      window.removeEventListener('offline', handleOffline);
-    };
+      // Initialize WebSocket connections
+      realtimeService.initialize();
+      console.log('[Layout] Realtime initialized');
+
+      return () => {
+        window.removeEventListener('online', handleOnline);
+        window.removeEventListener('offline', handleOffline);
+      };
+    } catch (error) {
+      console.error('[Layout] Error in onMount:', error);
+    }
   });
 
   onDestroy(() => {

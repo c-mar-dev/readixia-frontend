@@ -87,8 +87,18 @@
 
   // Initialize stores on mount
   onMount(() => {
-    decisionStore.load();
-    decisionStore.startPolling();
+    console.log('[Page] onMount starting');
+    try {
+      decisionStore.load().then(() => {
+        console.log('[Page] decisionStore.load() completed');
+      }).catch((error) => {
+        console.error('[Page] decisionStore.load() failed:', error);
+      });
+      decisionStore.startPolling();
+      console.log('[Page] polling started');
+    } catch (error) {
+      console.error('[Page] Error in onMount:', error);
+    }
   });
 
   onDestroy(() => {
