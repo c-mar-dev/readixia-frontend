@@ -117,6 +117,30 @@
   function handleDefer() {
     dispatch('defer');
   }
+
+  // Quick confirm for high-confidence project suggestions
+  async function handleQuickConfirm() {
+    if (actionInProgress || !data.suggestedProject) return;
+    actionInProgress = true;
+
+    try {
+      dispatch('action', {
+        name: 'QuickConfirm',
+        decision,
+        payload: {
+          category: selectedCategory || data.suggestedCategory || 'Work',
+          project: data.suggestedProject,
+          state_action: 'route'
+        }
+      });
+    } finally {
+      setTimeout(() => { actionInProgress = false; }, 100);
+    }
+  }
+
+  // Check if we have a high-confidence project suggestion
+  $: hasHighConfidenceSuggestion = data.suggestedProject &&
+    (data.projectConfidence >= 0.75 || data.projectConfidence === undefined);
 </script>
 
 <div class="space-y-6">
@@ -130,8 +154,54 @@
     </div>
   {/if}
 
-  <!-- AI Suggestion Quick-Select -->
-  {#if data.suggestedCategory}
+  <!-- Quick Confirm for High-Confidence Project Suggestions -->
+  {#if hasHighConfidenceSuggestion}
+    <div class="bg-emerald-900/20 border border-emerald-800/30 rounded-lg p-4">
+      <div class="flex items-center justify-between">
+        <div class="flex items-center gap-3">
+          <div class="w-10 h-10 rounded-full bg-emerald-500/20 flex items-center justify-center">
+            <svg class="w-5 h-5 text-emerald-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7" />
+            </svg>
+          </div>
+          <div>
+            <div class="text-emerald-300 font-medium">{data.suggestedProject}</div>
+            <div class="text-emerald-400/70 text-xs">
+              {#if data.projectConfidence !== undefined}
+                {Math.round(data.projectConfidence * 100)}% confidence
+              {:else}
+                Suggested project
+              {/if}
+            </div>
+          </div>
+        </div>
+        <button
+          on:click={handleQuickConfirm}
+          disabled={actionInProgress}
+          class="px-4 py-2 bg-emerald-600 hover:bg-emerald-500 text-white rounded-lg text-sm font-medium disabled:opacity-50 inline-flex items-center gap-2"
+        >
+          {#if actionInProgress}
+            <LoadingSpinner size="sm" />
+          {:else}
+            <svg class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7" />
+            </svg>
+          {/if}
+          Confirm
+        </button>
+      </div>
+      {#if data.alternativeProjects && data.alternativeProjects.length > 0}
+        <div class="mt-3 pt-3 border-t border-emerald-800/30">
+          <div class="text-xs text-emerald-400/60">
+            Alternatives: {data.alternativeProjects.map(p => p.name).join(', ')}
+          </div>
+        </div>
+      {/if}
+    </div>
+  {/if}
+
+  <!-- AI Suggestion Quick-Select (for category) -->
+  {#if data.suggestedCategory && !hasHighConfidenceSuggestion}
     <div class="bg-pink-900/20 border border-pink-800/30 rounded-lg p-4">
       <div class="flex items-center justify-between">
         <div class="flex items-center gap-3">
