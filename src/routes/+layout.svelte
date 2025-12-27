@@ -4,6 +4,7 @@
   import UndoToast from '$lib/components/UndoToast.svelte';
   import Toast from '$lib/components/Toast.svelte';
   import ConnectionIndicator from '$lib/components/ConnectionIndicator.svelte';
+  import Sidebar from '$lib/components/Sidebar.svelte';
   import { realtimeService } from '$lib/services/realtime';
   import {
     handleDecisionWebSocketEvent,
@@ -67,12 +68,21 @@
   });
 </script>
 
-<!-- Connection status indicator in top-right corner -->
-<div class="fixed right-4 top-4 z-40">
-  <ConnectionIndicator />
-</div>
+<!-- Main layout with sidebar -->
+<div class="flex h-screen overflow-hidden">
+  <!-- Sidebar navigation -->
+  <Sidebar />
 
-<slot />
+  <!-- Main content area -->
+  <div class="flex-1 overflow-hidden">
+    <!-- Connection status indicator in top-right corner -->
+    <div class="fixed right-4 top-4 z-40">
+      <ConnectionIndicator />
+    </div>
+
+    <slot />
+  </div>
+</div>
 
 <!-- Global toast notifications (bottom-left) -->
 <Toast />

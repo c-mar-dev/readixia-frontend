@@ -113,7 +113,7 @@
 
 <svelte:window on:keydown={handleKeydown} />
 
-<div class="min-h-screen bg-zinc-900 text-zinc-100 flex flex-col">
+<div class="h-full overflow-auto bg-zinc-900 text-zinc-100 flex flex-col">
   <!-- Minimal header -->
   <div class="flex items-center justify-between px-6 py-4 border-b border-zinc-800 bg-zinc-900 z-10">
     <button

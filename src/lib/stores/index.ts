@@ -204,3 +204,32 @@ export {
 
 export { STORE_CONFIG, REALTIME_CONFIG } from './config';
 export type { StoreConfig, RealtimeConfig } from './config';
+
+// =============================================================================
+// Items Stores
+// =============================================================================
+
+export {
+  itemsStore,
+  items,
+  isItemsLoading,
+  isItemsLoadingMore,
+  itemsError,
+  itemsHasMore,
+  itemsTotal,
+  selectedItem,
+  isLoadingDetail,
+} from './items';
+
+export type { ItemsStoreState } from './items';
+
+export {
+  itemFilterStore,
+  itemTypeFilter,
+  itemStateFilter,
+  itemProjectFilter,
+  itemSearchQuery,
+  hasItemFilters,
+} from './itemFilters';
+
+export type { ItemFilterState } from './itemFilters';

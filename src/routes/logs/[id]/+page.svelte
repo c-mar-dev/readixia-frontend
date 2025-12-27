@@ -60,7 +60,7 @@
   let showResponse = false;
 </script>
 
-<div class="min-h-screen bg-zinc-900 text-zinc-100 p-6">
+<div class="h-full overflow-auto bg-zinc-900 text-zinc-100 p-6">
   <div class="max-w-5xl mx-auto">
     <!-- Header -->
     <div class="flex items-center gap-4 mb-6">

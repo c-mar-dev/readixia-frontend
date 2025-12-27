@@ -461,7 +461,7 @@
 
 <svelte:window on:keydown={handleKeydown} on:click={closeDropdowns} />
 
-<div class="min-h-screen bg-zinc-900 text-zinc-100 font-sans">
+<div class="h-full overflow-auto bg-zinc-900 text-zinc-100 font-sans">
   <!-- Session Bar -->
   <SessionBar />
 

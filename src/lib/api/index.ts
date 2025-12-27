@@ -69,6 +69,13 @@ export { projectsApi } from './projects';
 export type { Project, ProjectListResponse, ProjectListParams } from './projects';
 
 // =============================================================================
+// Items API
+// =============================================================================
+
+export { itemsApi } from './items';
+export type { Item, ItemDetail, ItemListResponse, ItemListParams, ItemType } from './items';
+
+// =============================================================================
 // Speakers API
 // =============================================================================
 

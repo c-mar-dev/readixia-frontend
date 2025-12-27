@@ -14,7 +14,7 @@
   });
 </script>
 
-<div class="min-h-screen bg-zinc-900 text-zinc-100 p-8 font-sans">
+<div class="h-full overflow-auto bg-zinc-900 text-zinc-100 p-8 font-sans">
   <div class="max-w-6xl mx-auto">
     <!-- Header -->
     <div class="flex items-center justify-between mb-8">

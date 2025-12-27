@@ -158,7 +158,7 @@
 
 <svelte:window on:keydown={handleKeydown} />
 
-<div class="min-h-screen bg-zinc-900 text-zinc-100">
+<div class="h-full overflow-auto bg-zinc-900 text-zinc-100">
   <!-- Header -->
   <div class="border-b border-zinc-800">
     <div class="px-6 py-4 flex items-center justify-between">
