@@ -100,7 +100,7 @@
 
     try {
       dispatch('action', {
-        name: 'Save Category',
+        name: 'Apply',
         decision,
         payload: {
           category: selectedCategory,
@@ -291,9 +291,9 @@
       class="px-6 py-2 bg-pink-600 hover:bg-pink-500 text-white rounded-lg text-sm font-medium disabled:opacity-50 disabled:cursor-not-allowed inline-flex items-center gap-2"
     >
       {#if actionInProgress}
-        <LoadingSpinner size="sm" /> Saving...
+        <LoadingSpinner size="sm" /> Applying...
       {:else}
-        Save Category
+        Apply
       {/if}
     </button>
   </div>

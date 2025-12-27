@@ -150,8 +150,8 @@
     actionInProgress = true;
 
     try {
-      // Collect form data
-      const formData = collectFormData(actionName);
+      // Use payload from sub-cards if provided, otherwise collect from local form
+      const formData = payload || collectFormData(actionName);
 
       // Build resolution payload
       const resolutionPayload = buildResolutionPayload(decision, actionName, formData);

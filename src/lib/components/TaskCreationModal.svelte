@@ -1,6 +1,8 @@
 <script>
   import Modal from './Modal.svelte';
-  import { createEventDispatcher } from 'svelte';
+  import FuzzyDropdown from './FuzzyDropdown.svelte';
+  import { createEventDispatcher, onMount } from 'svelte';
+  import { projectsApi } from '$lib/api';
 
   const dispatch = createEventDispatcher();
 
@@ -8,6 +10,22 @@
   let project = '';
   let priority = 'normal';
   let description = '';
+
+  // Projects from API
+  let projects = [];
+  let projectsLoading = false;
+
+  onMount(async () => {
+    try {
+      projectsLoading = true;
+      const response = await projectsApi.list({ state: 'active' });
+      projects = response.projects.map(p => p.title);
+    } catch (e) {
+      console.error('Failed to fetch projects:', e);
+    } finally {
+      projectsLoading = false;
+    }
+  });
 
   function handleSubmit() {
     if (!title.trim()) return;
@@ -39,13 +57,19 @@
     <div class="grid grid-cols-2 gap-4">
       <div>
         <label for="task-project" class="block text-sm font-medium text-zinc-300 mb-1">Project (Optional)</label>
-        <input
-          id="task-project"
-          type="text"
-          bind:value={project}
-          class="w-full bg-zinc-800 border border-zinc-700 rounded-lg px-4 py-2.5 text-zinc-200 focus:border-amber-500 focus:outline-none placeholder-zinc-500"
-          placeholder="e.g., Apollo"
-        />
+        {#if projectsLoading}
+          <div class="px-4 py-2.5 bg-zinc-800 border border-zinc-700 rounded-lg text-zinc-500 text-sm">
+            Loading projects...
+          </div>
+        {:else}
+          <FuzzyDropdown
+            options={projects}
+            bind:value={project}
+            placeholder="Search or select project..."
+            allowEmpty={true}
+            emptyLabel="No project"
+          />
+        {/if}
       </div>
       <div>
         <label for="task-priority" class="block text-sm font-medium text-zinc-300 mb-1">Priority</label>

@@ -141,7 +141,7 @@ const actionToPayloadMap: Record<string, (decision: UiDecision, actionName: stri
   'Reject Request': buildApprovalPayload,
 
   // Categorize actions
-  'Save Category': buildCategorizePayload,
+  'Apply': buildCategorizePayload,
 
   // Meeting triage actions
   'Confirm Meeting Tasks': buildMeetingTriagePayload,
